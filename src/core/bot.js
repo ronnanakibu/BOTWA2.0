@@ -7,16 +7,18 @@ import { Boom } from '@hapi/boom'
 import pino from 'pino'
 import qrcode from 'qrcode' // ← Impor library qrcode
 import 'dotenv/config'
+import { handleIncomingMessage } from '../handlers/message.js'
+import { loadCommands } from './loader.js'
 
 // Custom logger to see connection events, showing only errors to keep it quiet
-const logger = pino({ level: 'error' }) 
+const logger = pino({ level: 'error' })
 
 let reconnectCount = 0
 const MAX_RECONNECT_ATTEMPTS = 5
 
 async function startBot() {
     console.log('🤖 [System] Starting bot initialization...')
-    
+
     let version = [2, 3000, 1017531287] // Default fallback version
     try {
         console.log('🤖 [System] Fetching latest WhatsApp Web version from Baileys...')
@@ -29,7 +31,7 @@ async function startBot() {
 
     const sessionPath = process.env.SESSION_PATH || './storage/sessions'
     console.log(`🤖 [System] Loading session auth state from: ${sessionPath}`)
-    
+
     let state, saveCreds
     try {
         const auth = await useMultiFileAuthState(sessionPath)
@@ -110,6 +112,7 @@ async function startBot() {
 
     // Test: reply on ping command
     sock.ev.on('messages.upsert', async ({ messages }) => {
+        await handleIncomingMessage(sock, messages)
         const msg = messages[0]
         if (!msg.message || msg.key.fromMe) return
 

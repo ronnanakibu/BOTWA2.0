@@ -1,6 +1,38 @@
 // src/core/connection.js
 import { makeWASocket, useMultiFileAuthState, DisconnectReason } from '@whiskeysockets/baileys'
 import path from 'path'
+import { Boom } from '@hapi/boom'
+
+const RECONNECT_DELAYS = [3000, 5000, 10000, 30000, 60000] // ms
+let reconnectAttempt = 0
+
+async function handleDisconnect(lastDisconnect) {
+    const reason = new Boom(lastDisconnect?.error)?.output?.statusCode
+    const shouldReconnect = reason !== DisconnectReason.loggedOut
+
+    if (!shouldReconnect) {
+        logger.warn('Logged out. Clearing session...')
+        await clearSession()
+        return
+    }
+
+    const delay = RECONNECT_DELAYS[Math.min(reconnectAttempt, RECONNECT_DELAYS.length - 1)]
+    logger.info(`Reconnecting in ${delay}ms (attempt ${++reconnectAttempt})`)
+
+    setTimeout(async () => {
+        await startBot()  // re-init full socket
+    }, delay)
+}
+
+// Anti-crash global handlers (src/core/bot.js)
+process.on('uncaughtException', (err) => {
+    logger.error('Uncaught Exception:', err)
+    // Jangan exit — biarkan bot tetap jalan
+})
+
+process.on('unhandledRejection', (reason) => {
+    logger.error('Unhandled Rejection:', reason)
+})
 
 const SESSION_PATH = path.resolve('./storage/sessions')
 
@@ -20,7 +52,6 @@ export async function createSocket() {
     return sock
 }
 
-// src/core/connection.js (lanjutan)
 sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update
 
