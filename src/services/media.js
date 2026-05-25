@@ -36,14 +36,22 @@ class MediaService {
     }
 
     // ==========================================
-    // 🌟 FITUR BARU: AUTO WRAPPING UNTUK QUOTE CARD
+    // 🌟 REFACTOR TOTAL: LOGIKA QUOTE CARD VIRAL
     // ==========================================
-    #wrapText(text, maxCharsPerLine = 16) {
+    #wrapText(text, maxCharsPerLine = 14) {
         const words = text.trim().split(/\s+/)
         let lines = []
         let currentLine = ''
 
         words.forEach(word => {
+            // Jika kata itu sendiri super panjang, paksa pecah
+            if (word.length > maxCharsPerLine) {
+                if (currentLine) lines.push(currentLine.trim())
+                lines.push(word)
+                currentLine = ''
+                return
+            }
+
             if ((currentLine + word).length > maxCharsPerLine) {
                 lines.push(currentLine.trim())
                 currentLine = word + ' '
@@ -56,25 +64,27 @@ class MediaService {
     }
 
     /**
-     * Generator Quote Card Aesthetic (Hitam di atas Putih)
+     * Generator Stiker Meme Viral Sesuai Gambar (Rata Kiri, Logo Ps, Watermark)
      */
     async toQuoteSticker(rawText) {
         try {
-            // 1. Bungkus teks otomatis menjadi beberapa baris agar estetik ke bawah
-            const lines = this.#wrapText(rawText, 16)
+            // 1. Biarkan teks original (dukung lowercase huruf kecil sesuai tren viral)
+            const cleanText = rawText.trim()
 
-            // 2. Hitung font size dinamis berdasarkan jumlah baris agar tidak luber
-            let fontSize = 52
-            if (lines.length > 4) fontSize = 42
-            if (lines.length > 8) fontSize = 32
+            // 2. Potong kalimat menjadi baris-baris pendek rata kiri (max 14 karakter per baris)
+            const lines = this.#wrapText(cleanText, 14)
 
-            const lineSpacing = fontSize * 1.2
-            const totalTextHeight = lines.length * lineSpacing
+            // 3. Set ukuran font konstan 65px agar tebal dan estetik (menyusut jika baris terlalu banyak)
+            let fontSize = 65
+            if (lines.length > 4) fontSize = 52
+            if (lines.length > 7) fontSize = 42
 
-            // 3. Kalkulasi koordinat Y agar teks OTOMATIS berada di TENGAH VERTIKAL kanvas 512x512
-            let startY = (512 - totalTextHeight) / 2 + fontSize - 10
+            const lineSpacing = fontSize * 1.15
 
-            // 4. Bangun komponen text SVG (Rata kiri/Left-aligned dengan padding 45px sesuai gambar)
+            // 4. Titik koordinat Y dimulai agak ke atas karena rata kiri mengalir ke bawah
+            let startY = 135
+
+            // 5. Bangun elemen teks biner SVG dengan font-family sans-serif
             let svgTextElements = ''
             lines.forEach((line, i) => {
                 const y = startY + (i * lineSpacing)
@@ -85,36 +95,51 @@ class MediaService {
                     .replace(/"/g, '&quot;')
 
                 svgTextElements += `
-                <text x="45" y="${y}" 
-                    font-family="Arial, sans-serif" 
+                <text x="35" y="${y}" 
+                    font-family="Arial, Helvetica, sans-serif" 
                     font-weight="bold" 
                     font-size="${fontSize}px" 
-                    fill="black">
+                    fill="#1c1c1c"
+                    letter-spacing="-1px">
                     ${safeLine}
                 </text>\n`
             })
 
+            // 🌟 STRING ASSET: Base64 Logo Photoshop (Ps) Biru Kotak Sempurna
+            const logoPsBase64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAMAAABg3yd1AAAAMFBMVEVFX0EtX0MvYEUvYUUwYkYwY0YxY0cxY0gyZUkzZkozaEs0aUw1akw1a002bE43bU44blA6XkYxAAAAAXRSTlMAQObYZgAAAAlwSFlzAAAOxAAADsQBlSsOGwAAAIdJREFUeNrtlksOwyAMRAnmByG09z9tV6mqqtK6idSFiGfGgG1m7CHZ6Z9mZNoS6Z6GfVwX0An8C9gbeAtYAmvAFvAOvAX6gCvgfVwXCD6+fCInA9YAdYByYAlQBygHlgB1gHJgCVAHKAeWAHWAcshzgv/C7uP7YwLeX0p6+v8v7Fv4V8De6Z/mO3XvA0u7vS7fAAAAAElFTkSuQmCC"
+
+            // 6. Satukan seluruh komponen ke dalam Kanvas SVG
             const svgOverlay = Buffer.from(`
             <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
+                <image href="${logoPsBase64}" x="35" y="35" width="45" height="45"/>
+                
                 ${svgTextElements}
+                
+                <text x="35" y="475" 
+                    font-family="Arial, sans-serif" 
+                    font-size="16px" 
+                    fill="#8e8e8e" 
+                    font-weight="bold">
+                    @quoteariss
+                </text>
             </svg>`)
 
-            // 5. Racik menggunakan sharp dengan basic kanvas PUTIH SOLID (r:255, g:255, b:255)
+            // 7. Render kanvas dasar putih bersih solid menggunakan sharp
             return await sharp({
                 create: {
                     width: 512,
                     height: 512,
                     channels: 4,
-                    background: { r: 255, g: 255, b: 255, alpha: 1 } // Putih bersih, alpha 1 (solid)
+                    background: { r: 255, g: 255, b: 255, alpha: 1 }
                 }
             })
                 .composite([{ input: svgOverlay, top: 0, left: 0 }])
-                .webp({ quality: 90 })
+                .webp({ quality: 95 })
                 .toBuffer()
 
         } catch (err) {
             logger.error('❌ Error inside MediaService.toQuoteSticker:', err.message)
-            throw new Error('Gagal meracik quote card sticker.')
+            throw new Error('Gagal meracik quote card sticker viral.')
         }
     }
 
