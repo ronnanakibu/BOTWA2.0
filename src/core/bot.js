@@ -112,8 +112,7 @@ async function startBot() {
 
     // Test: reply on ping command
     sock.ev.on('messages.upsert', async ({ messages }) => {
-        await handleIncomingMessage(sock, messages)
-        const msg = messages[0]
+        await handleIncomingMessage(sock, m)
         if (!msg.message || msg.key.fromMe) return
 
         const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || ''
