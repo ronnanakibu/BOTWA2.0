@@ -6,20 +6,17 @@ export default {
     name: 'sticker',
     aliases: ['s', 'stiker'],
     category: 'media',
-    description: 'Convert image to a clean WhatsApp sticker',
-    usage: '!sticker (caption atau reply gambar)',
+    description: 'Convert image to a clean square-cropped meme sticker with text overlay',
+    usage: '/sticker Teks Atas | Teks Bawah',
     cooldown: 5,
     permissions: ['user'],
     async execute(ctx) {
-        const { msg, messageContent, type, reply, replyMedia } = ctx
+        const { msg, messageContent, type, args, reply, replyMedia } = ctx
 
-        // Cek 1: Apakah pesan langsung berupa gambar?
+        // Cek Apakah pesan berupa gambar langsung atau meng-quote gambar
         let isImage = type === 'imageMessage'
-
-        // Cek 2: Apakah pesan meng-quote (reply) gambar orang lain?
         const quotedMsg = messageContent?.extendedTextMessage?.contextInfo?.quotedMessage
 
-        // Bongkar bungkus pesan quote jika berjenis ephemeral
         let finalQuotedMsg = quotedMsg
         if (quotedMsg) {
             const quotedType = Object.keys(quotedMsg)[0]
@@ -31,16 +28,16 @@ export default {
 
         let isQuotedImage = finalQuotedMsg && Object.keys(finalQuotedMsg)[0] === 'imageMessage'
 
-        // Validasi utama penodong media gambar
         if (!isImage && !isQuotedImage) {
-            return reply('⚠️ Mana stiker nya, cuy? 😭\n\nKirim gambar dengan caption *!s* atau balas (reply) gambar yang sudah ada pakai perintah *!s*!')
+            return reply('⚠️ Mana stiker nya, cuy? 😭\n\nKirim gambar dengan caption atau balas gambar lama dengan perintah */s Teks Atas | Teks Bawah* !')
         }
 
-        await reply('⏳ Sedang memproses stiker kamu, tunggu bentar...')
+        await reply('⏳ Sedang di-masak Dik, stiker teks meme lu lagi diproses...')
 
         try {
             const targetMessage = isImage ? msg : { message: quotedMsg, key: msg.key }
 
+            // Unduh buffer biner media dari server WA
             const buffer = await downloadMediaMessage(
                 targetMessage,
                 'buffer',
@@ -51,12 +48,26 @@ export default {
                 }
             )
 
-            const stickerBuffer = await mediaService.toSticker(buffer)
+            // 🌟 LOGIKA SPLITTER PARSER: Ambil teks setelah command dan bagi berdasarkan karakter "|"
+            const fullText = args.join(' ')
+            let topText = ''
+            let bottomText = ''
+
+            if (fullText) {
+                const parts = fullText.split('|')
+                topText = parts[0] ? parts[0].trim() : ''
+                bottomText = parts[1] ? parts[1].trim() : ''
+            }
+
+            // Oper pengolahan gambar ke Sharp Service
+            const stickerBuffer = await mediaService.toMemeSticker(buffer, topText, bottomText)
+
+            // Muntahkan hasilnya dalam wujud stiker berkas WebP
             await replyMedia(stickerBuffer, 'sticker')
 
         } catch (err) {
-            console.error('❌ Sticker command runtime error:', err.message)
-            await reply('❌ Waduh sorry cuy, gagal bikin stiker. Pastikan file gambar aman gak korup!')
+            console.error('❌ Meme sticker command error:', err.message)
+            await reply('❌ Waduh sorry cuy, gagal total pas meracik stiker teks meme. Pastikan gambarnya aman!')
         }
     }
 }
