@@ -5,12 +5,13 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
 import pino from 'pino'
-import qrcode from 'qrcode' // ← Impor library qrcode
+import qrcode from 'qrcode'
 import 'dotenv/config'
-import { handleIncomingMessage } from '../handlers/message.js'
-import { loadCommands } from './loader.js'
 
-// Custom logger to see connection events, showing only errors to keep it quiet
+// 🌟 IMPORT LAYER MODULAR
+import { loadCommands } from './loader.js'
+import { handleIncomingMessage } from '../handlers/message.js'
+
 const logger = pino({ level: 'error' })
 
 let reconnectCount = 0
@@ -19,7 +20,16 @@ const MAX_RECONNECT_ATTEMPTS = 5
 async function startBot() {
     console.log('🤖 [System] Starting bot initialization...')
 
-    let version = [2, 3000, 1017531287] // Default fallback version
+    // 🌟 1. BOOTSTRAP COMMANDS SEBELUM KONEK VIA SOCKET
+    try {
+        console.log('🤖 [System] Bootstrapping commands folder...')
+        await loadCommands()
+        console.log('✅ [System] All commands loaded successfully.')
+    } catch (err) {
+        console.error('❌ [System] Failed to bootstrap commands:', err)
+    }
+
+    let version = [2, 3000, 1017531287]
     try {
         console.log('🤖 [System] Fetching latest WhatsApp Web version from Baileys...')
         const { version: latestVersion } = await fetchLatestBaileysVersion()
@@ -47,17 +57,15 @@ async function startBot() {
     const sock = makeWASocket({
         version,
         auth: state,
-        logger, // Pass pino logger to see the connection details
+        logger,
     })
 
-    // 📱 Logika Pengambilan Phone Number Pairing Code
     const phoneNumber = process.env.BOT_NUMBER ? process.env.BOT_NUMBER.replace(/[^0-9]/g, '') : null
     if (phoneNumber && !state.creds?.registered) {
         console.log(`🤖 [System] Fresh session detected. Requesting pairing code for +${phoneNumber} in 3 seconds...`)
         setTimeout(async () => {
             try {
                 const code = await sock.requestPairingCode(phoneNumber)
-                // Memformat kode menjadi format cantik XXXX-XXXX seperti di aplikasi WhatsApp asli
                 const formattedCode = code.match(/.{1,4}/g)?.join('-') || code
                 console.log('\n==================================================')
                 console.log(`🔑 YOUR WHATSAPP PAIRING CODE: ${formattedCode.toUpperCase()}`)
@@ -71,7 +79,6 @@ async function startBot() {
     sock.ev.on('creds.update', saveCreds)
 
     sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-        // Tampilkan QR Code hanya jika qr ada DAN tidak menggunakan metode nomor pairing
         if (qr && !phoneNumber) {
             console.log('📱 [System] QR Code generated! Scan this QR code with your WhatsApp Link Device:')
             qrcode.toString(qr, { type: 'terminal', small: true }, (err, url) => {
@@ -82,7 +89,7 @@ async function startBot() {
 
         if (connection === 'open') {
             console.log('✅ [System] Bot connected successfully to WhatsApp!')
-            reconnectCount = 0 // Reset reconnect count on successful connection
+            reconnectCount = 0
         }
 
         if (connection === 'close') {
@@ -91,16 +98,13 @@ async function startBot() {
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut
 
             console.log(`❌ [System] Connection closed. Status Code: ${statusCode}, Error:`, error?.message || error)
-            console.log('❌ [System] Reconnect decision:', shouldReconnect)
 
             if (shouldReconnect) {
                 if (reconnectCount < MAX_RECONNECT_ATTEMPTS) {
                     reconnectCount++
-                    const delay = Math.min(Math.pow(2, reconnectCount) * 1000, 30000) // Exponential backoff: 2s, 4s, 8s, 16s... up to 30s
+                    const delay = Math.min(Math.pow(2, reconnectCount) * 1000, 30000)
                     console.log(`🔄 [System] Reconnecting in ${delay / 1000} seconds (Attempt ${reconnectCount}/${MAX_RECONNECT_ATTEMPTS})...`)
-                    setTimeout(() => {
-                        startBot()
-                    }, delay)
+                    setTimeout(() => { startBot() }, delay)
                 } else {
                     console.log('❌ [System] Maximum reconnect attempts reached. Please restart the bot manually.')
                 }
@@ -110,8 +114,8 @@ async function startBot() {
         }
     })
 
+    // 🌟 2. JEMBATAN ROUTER UTAMA (OPER KE HANDLER)
     sock.ev.on('messages.upsert', async (m) => {
-        // Alihkan seluruh pemrosesan pesan masuk ke handler pusat kita
         await handleIncomingMessage(sock, m)
     })
 }
