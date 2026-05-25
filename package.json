@@ -5,7 +5,8 @@
         "start": "node src/core/bot.js",
         "start:pm2": "pm2 start ecosystem.config.js",
         "lint": "eslint src/",
-        "db:migrate": "node scripts/migrate.js"
+        "db:migrate": "node scripts/migrate.js",
+        "push": "node deploy.js"
     },
     "name": "wabot2.0",
     "version": "1.0.0",
@@ -25,6 +26,7 @@
         "sharp": "^0.34.5"
     },
     "devDependencies": {
+        "deploy-sftp": "^2.2.19",
         "nodemon": "^3.1.14"
     }
 }
