@@ -11,27 +11,36 @@ export default {
     cooldown: 5,
     permissions: ['user'],
     async execute(ctx) {
-        const { msg, type, reply, replyMedia } = ctx
+        const { msg, messageContent, type, reply, replyMedia } = ctx
 
-        // Cek apakah pesan langsung berupa gambar
+        // Cek 1: Apakah pesan langsung berupa gambar?
         let isImage = type === 'imageMessage'
 
-        // Cek apakah pesan berupa balasan (reply) terhadap gambar lain
-        const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage
-        let isQuotedImage = quotedMsg && Object.keys(quotedMsg)[0] === 'imageMessage'
+        // Cek 2: Apakah pesan meng-quote (reply) gambar orang lain?
+        const quotedMsg = messageContent?.extendedTextMessage?.contextInfo?.quotedMessage
 
-        if (!isImage && !isQuotedImage) {
-            return reply('⚠️ Kirim gambar dengan caption *!s* atau balas (reply) gambar yang sudah dikirim dengan perintah *!s*, cuy!')
+        // Bongkar bungkus pesan quote jika berjenis ephemeral
+        let finalQuotedMsg = quotedMsg
+        if (quotedMsg) {
+            const quotedType = Object.keys(quotedMsg)[0]
+            const wrapperTypes = ['ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2']
+            if (wrapperTypes.includes(quotedType)) {
+                finalQuotedMsg = quotedMsg[quotedType].message
+            }
         }
 
-        // Tampilkan status indikator loading
+        let isQuotedImage = finalQuotedMsg && Object.keys(finalQuotedMsg)[0] === 'imageMessage'
+
+        // Validasi utama penodong media gambar
+        if (!isImage && !isQuotedImage) {
+            return reply('⚠️ Mana stiker nya, cuy? 😭\n\nKirim gambar dengan caption *!s* atau balas (reply) gambar yang sudah ada pakai perintah *!s*!')
+        }
+
         await reply('⏳ Sedang memproses stiker kamu, tunggu bentar...')
 
         try {
-            // Tentukan target objek pesan yang akan diunduh medianya
             const targetMessage = isImage ? msg : { message: quotedMsg, key: msg.key }
 
-            // Unduh file media biner dari server WhatsApp menggunakan built-in helper Baileys
             const buffer = await downloadMediaMessage(
                 targetMessage,
                 'buffer',
@@ -42,15 +51,12 @@ export default {
                 }
             )
 
-            // Konversi buffer gambar murni lewat pengolah Sharp Service kita
             const stickerBuffer = await mediaService.toSticker(buffer)
-
-            // Kirim balik berkas stiker WebP ke chat tujuan menggunakan context helper
             await replyMedia(stickerBuffer, 'sticker')
 
         } catch (err) {
-            console.error(err)
-            await reply('❌ Waduh sorry cuy, gagal bikin stiker. Pastikan file yang kamu kirim gak korup ya!')
+            console.error('❌ Sticker command runtime error:', err.message)
+            await reply('❌ Waduh sorry cuy, gagal bikin stiker. Pastikan file gambar aman gak korup!')
         }
     }
 }

@@ -2,22 +2,38 @@
 import { commands } from '../core/loader.js'
 import { logger } from '../utils/logger.js'
 
-export async function handleIncomingMessage(sock, m) {
+export async function handleIncomingMessage(sock, { messages }) {
     try {
-        const msg = m.messages[0]
+        const msg = messages[0]
         if (!msg.message || msg.key.fromMe) return
 
         const from = msg.key.remoteJid
         const isGroup = from.endsWith('@g.us')
         const sender = isGroup ? msg.key.participant : from
 
-        // Ekstrak teks dari berbagai tipe pesan
-        const type = Object.keys(msg.message)[0]
-        const body = msg.message?.conversation
-            || msg.message?.extendedTextMessage?.text
-            || msg.message?.imageMessage?.caption
-            || msg.message?.videoMessage?.caption
+        // 🌟 LOGIKA UNWRAPPER: Bongkar bungkus jika pesan berjenis Ephemeral atau ViewOnce
+        let messageContent = msg.message
+        const wrapperTypes = ['ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'documentWithCaptionMessage']
+        const baseType = Object.keys(messageContent)[0]
+
+        if (wrapperTypes.includes(baseType)) {
+            messageContent = messageContent[baseType].message
+        }
+
+        if (!messageContent) return
+
+        // Ambil tipe asli pesan setelah dibongkar
+        const type = Object.keys(messageContent)[0]
+
+        // Ekstrak teks perintah
+        const body = messageContent?.conversation
+            || messageContent?.extendedTextMessage?.text
+            || messageContent?.imageMessage?.caption
+            || messageContent?.videoMessage?.caption
             || ''
+
+        // Paksa console.log tampil di terminal Pterodactyl untuk keperluan debugging live
+        console.log(`📩 [Msg Received] From: ${sender} | Type: ${type} | Text: ${body}`)
 
         const prefix = process.env.BOT_PREFIX || '!'
         if (!body.startsWith(prefix)) return
@@ -28,33 +44,30 @@ export async function handleIncomingMessage(sock, m) {
         const command = commands.get(commandName)
         if (!command) return
 
-        // Bangun Object Context (ctx) sesuai ekspektasi plugin kamu
         const ctx = {
             sock,
             msg,
+            messageContent, // Kita sertakan pesan yang sudah dibongkar ke context
             from,
             sender,
             isGroup,
             args,
             body,
             type,
-            // Helper function untuk reply instan bermutu (auto-quoted)
             reply: async (text, options = {}) => {
                 return sock.sendMessage(from, { text, ...options }, { quoted: msg })
             },
-            // Helper function untuk kirim media langsung
             replyMedia: async (content, mediaType, options = {}) => {
                 return sock.sendMessage(from, { [mediaType]: content, ...options }, { quoted: msg })
             }
         }
 
-        // TODO: Di fase berikutnya, kamu tinggal selipkan pipeline middleware di sini
-        // (antispam -> validator -> cooldown -> permission)
-
-        logger.info(`🚀 [Cmd] ${command.name} executed by ${sender}`)
+        console.log(`🚀 [Exec Command] Running: ${command.name} for ${sender}`)
         await command.execute(ctx)
 
     } catch (err) {
-        logger.error('❌ Error in message handler:', err)
+        // Selain masuk file log, paksa cetak ke konsol agar kamu tahu persis letak rusaknya
+        console.error('❌ Error inside message handler:', err.message)
+        logger.error(err)
     }
 }
