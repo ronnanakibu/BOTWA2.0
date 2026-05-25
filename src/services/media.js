@@ -9,29 +9,33 @@ class MediaService {
         this.#initFontconfig()
     }
 
+    /**
+         * Set ulang konfigurasi minimal tanpa mendaftarkan folder font eksternal
+         * agar engine Sharp murni memakai font standar bawaan OS Linux.
+         */
     #initFontconfig() {
         try {
             const configDir = path.resolve('./storage/database')
-            const fontDir = path.resolve('./src/assets/fonts')
             const cacheDir = path.resolve('./storage/database/fontcache')
             const configFile = path.join(configDir, 'fonts.conf')
 
             if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true })
-            if (!fs.existsSync(fontDir)) fs.mkdirSync(fontDir, { recursive: true })
             if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
 
+            // 🌟 KUNCI: Kosongkan tag <dir>, biarkan engine mendeteksi default Arial/Sans-Serif Linux
             const minimalConfig = `<?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 <fontconfig>
-    <dir>${fontDir}</dir>
     <cachedir>${cacheDir}</cachedir>
 </fontconfig>`
 
             fs.writeFileSync(configFile, minimalConfig, 'utf8')
+
+            // Update env runtime server
             process.env.FONTCONFIG_FILE = configFile
-            console.log(`⚙️ [MediaService] Fontconfig ready for Anomali engine.`)
+            console.log(`⚙️ [MediaService] Fontconfig default system unlocked.`)
         } catch (err) {
-            console.error('❌ [MediaService] Gagal inisialisasi Fontconfig:', err.message)
+            console.error('❌ [MediaService] Gagal update Fontconfig:', err.message)
         }
     }
 
