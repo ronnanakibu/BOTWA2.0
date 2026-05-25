@@ -36,15 +36,14 @@ class MediaService {
     }
 
     // ==========================================
-    // 🌟 REFACTOR TOTAL: LOGIKA QUOTE CARD VIRAL
+    // 🟢 REFACTOR TOTAL: BRAT ALBUM COVER GENERATOR
     // ==========================================
-    #wrapText(text, maxCharsPerLine = 14) {
+    #wrapText(text, maxCharsPerLine = 12) {
         const words = text.trim().split(/\s+/)
         let lines = []
         let currentLine = ''
 
         words.forEach(word => {
-            // Jika kata itu sendiri super panjang, paksa pecah
             if (word.length > maxCharsPerLine) {
                 if (currentLine) lines.push(currentLine.trim())
                 lines.push(word)
@@ -64,27 +63,28 @@ class MediaService {
     }
 
     /**
-     * Generator Stiker Meme Viral Sesuai Gambar (Rata Kiri, Logo Ps, Watermark)
+     * Generator Stiker Tren Viral: brat text generator (Charli XCX style)
      */
     async toQuoteSticker(rawText) {
         try {
-            // 1. Biarkan teks original (dukung lowercase huruf kecil sesuai tren viral)
-            const cleanText = rawText.trim()
+            // Ciri khas Brat: Semuanya dipaksa huruf kecil murni (lowercase)
+            const cleanText = rawText.trim().toLowerCase()
 
-            // 2. Potong kalimat menjadi baris-baris pendek rata kiri (max 14 karakter per baris)
-            const lines = this.#wrapText(cleanText, 14)
+            // Brat memiliki baris yang sangat sempit dan padat (max 11-12 karakter per baris)
+            const lines = this.#wrapText(cleanText, 11)
 
-            // 3. Set ukuran font konstan 65px agar tebal dan estetik (menyusut jika baris terlalu banyak)
-            let fontSize = 65
-            if (lines.length > 4) fontSize = 52
-            if (lines.length > 7) fontSize = 42
+            // Ukuran font Brat default-nya besar, tebal, tapi menyusut jika teksnya panjang sekali
+            let fontSize = 78
+            if (lines.length > 3) fontSize = 64
+            if (lines.length > 5) fontSize = 50
+            if (lines.length > 8) fontSize = 38
 
-            const lineSpacing = fontSize * 1.15
+            // Jarak antar baris dibuat super rapat (ciri khas cover brat)
+            const lineSpacing = fontSize * 0.96
 
-            // 4. Titik koordinat Y dimulai agak ke atas karena rata kiri mengalir ke bawah
-            let startY = 135
+            // Posisi awal teks dimulai dari koordinat agak atas kiri
+            let startY = 120
 
-            // 5. Bangun elemen teks biner SVG dengan font-family sans-serif
             let svgTextElements = ''
             lines.forEach((line, i) => {
                 const y = startY + (i * lineSpacing)
@@ -94,52 +94,51 @@ class MediaService {
                     .replace(/>/g, '&gt;')
                     .replace(/"/g, '&quot;')
 
+                // Menggunakan Arial Narrow / Arial Black dengan letter-spacing minus (-) agar rapat berdempetan
                 svgTextElements += `
-                <text x="35" y="${y}" 
-                    font-family="Arial, Helvetica, sans-serif" 
-                    font-weight="bold" 
+                <text x="55" y="${y}" 
+                    font-family="'Arial Narrow', Arial, sans-serif" 
+                    font-stretch="condensed"
+                    font-weight="900" 
                     font-size="${fontSize}px" 
-                    fill="#1c1c1c"
-                    letter-spacing="-1px">
+                    fill="#000000"
+                    letter-spacing="-3px"
+                    filter="url(#bratBlur)">
                     ${safeLine}
                 </text>\n`
             })
 
-            // 🌟 STRING ASSET: Base64 Logo Photoshop (Ps) Biru Kotak Sempurna
-            const logoPsBase64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAMAAABg3yd1AAAAMFBMVEVFX0EtX0MvYEUvYUUwYkYwY0YxY0cxY0gyZUkzZkozaEs0aUw1akw1a002bE43bU44blA6XkYxAAAAAXRSTlMAQObYZgAAAAlwSFlzAAAOxAAADsQBlSsOGwAAAIdJREFUeNrtlksOwyAMRAnmByG09z9tV6mqqtK6idSFiGfGgG1m7CHZ6Z9mZNoS6Z6GfVwX0An8C9gbeAtYAmvAFvAOvAX6gCvgfVwXCD6+fCInA9YAdYByYAlQBygHlgB1gHJgCVAHKAeWAHWAcshzgv/C7uP7YwLeX0p6+v8v7Fv4V8De6Z/mO3XvA0u7vS7fAAAAAElFTkSuQmCC"
-
-            // 6. Satukan seluruh komponen ke dalam Kanvas SVG
+            // Overlay SVG lengkap dengan filter efek 'sedikit blur/low-res' agar 100% mirip aslinya
             const svgOverlay = Buffer.from(`
             <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
-                <image href="${logoPsBase64}" x="35" y="35" width="45" height="45"/>
-                
+                <defs>
+                    <filter id="bratBlur">
+                        <feGaussianBlur stdDeviation="0.4" result="blur" />
+                        <feMerge>
+                            <feMergeNode in="blur" />
+                            <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                    </filter>
+                </defs>
                 ${svgTextElements}
-                
-                <text x="35" y="475" 
-                    font-family="Arial, sans-serif" 
-                    font-size="16px" 
-                    fill="#8e8e8e" 
-                    font-weight="bold">
-                    @quoteariss
-                </text>
             </svg>`)
 
-            // 7. Render kanvas dasar putih bersih solid menggunakan sharp
+            // Render kanvas dasar menggunakan kode warna Hijau Neon Brat asli (#8ace00)
             return await sharp({
                 create: {
                     width: 512,
                     height: 512,
                     channels: 4,
-                    background: { r: 255, g: 255, b: 255, alpha: 1 }
+                    background: { r: 138, g: 206, b: 0, alpha: 1 } // #8ace00 (Brat Lime Green)
                 }
             })
                 .composite([{ input: svgOverlay, top: 0, left: 0 }])
-                .webp({ quality: 95 })
+                .webp({ quality: 90 }) // Sedikit compression biar dapet tekstur lofi-nya
                 .toBuffer()
 
         } catch (err) {
-            logger.error('❌ Error inside MediaService.toQuoteSticker:', err.message)
-            throw new Error('Gagal meracik quote card sticker viral.')
+            logger.error('❌ Error inside MediaService.toBratSticker:', err.message)
+            throw new Error('Gagal meracik stiker brat generator.')
         }
     }
 
