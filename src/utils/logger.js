@@ -1,6 +1,21 @@
 // src/utils/logger.js
 import pino from 'pino'
 import pinoPretty from 'pino-pretty'
+import fs from 'fs'
+
+// 🚀 PROTEKSI UTAMA: Pastikan folder storage dan sub-foldernya otomatis terbuat jika belum ada
+const requiredDirs = [
+    './storage/logs',
+    './storage/sessions',
+    './storage/database',
+    './storage/media'
+]
+
+for (const dir of requiredDirs) {
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true })
+    }
+}
 
 const isProduction = process.env.NODE_ENV === 'production'
 
