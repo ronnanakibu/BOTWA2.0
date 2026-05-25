@@ -1,6 +1,7 @@
 // src/core/loader.js
 import { readdirSync, statSync } from 'fs'
 import path from 'path'
+import { logger } from '../utils/logger.js' // 🌟 TAMBAHKAN IMPORT INI BIAR GAK CRASH!
 
 export const commands = new Map()
 
@@ -32,6 +33,7 @@ export async function loadCommands(dir = './src/commands') {
             }
         }
 
-        logger.debug(`Loaded command: ${cmd.name} [${cmd.category}]`)
+        // Menggunakan logger pino secara aman
+        logger.info(`Loaded command: ${cmd.name} [${cmd.category}]`)
     }
 }
