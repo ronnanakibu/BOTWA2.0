@@ -110,17 +110,9 @@ async function startBot() {
         }
     })
 
-    // Test: reply on ping command
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-        await handleIncomingMessage(sock, messages)
-        if (!msg.message || msg.key.fromMe) return
-
-        const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || ''
-        console.log(`📩 [Msg] From ${msg.key.remoteJid}: ${text}`)
-
-        if (text === '!ping') {
-            await sock.sendMessage(msg.key.remoteJid, { text: 'Pong! 🏓' })
-        }
+    sock.ev.on('messages.upsert', async (m) => {
+        // Alihkan seluruh pemrosesan pesan masuk ke handler pusat kita
+        await handleIncomingMessage(sock, m)
     })
 }
 
