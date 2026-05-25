@@ -11,22 +11,17 @@ const config = {
     password: 'Shbng2007'
 };
 
-// Folder/file yang tetap dilarang keras ikut ke server
+// Daftar file/folder yang dilarang ikut ke server
 const ignoreList = [
+    'node_modules',
+    'storage',
+    '.env',
     '.git',
     '.vscode',
-    'node_modules',
-    'storage',        // Proteksi mutlak session server
-    '.env',
-    'deploy.js',
-    'pull.js',
     'package-lock.json',
-    '.yarn',
-    '.npm',
-    'cache',
-    '.trash'
+    'deploy.js',
+    'pull.js'
 ];
-
 
 function runGitCommand(command) {
     try {
@@ -36,59 +31,74 @@ function runGitCommand(command) {
     }
 }
 
+// Fungsi rekursif untuk membaca SEMUA file lokal (dipakai saat Full Sync)
+async function getAllFiles(dir, fileList = []) {
+    const files = fs.readdirSync(dir);
+    for (const file of files) {
+        if (ignoreList.includes(file)) continue;
+        const name = path.join(dir, file);
+        if (fs.statSync(name).isDirectory()) {
+            await getAllFiles(name, fileList);
+        } else {
+            fileList.push(name);
+        }
+    }
+    return fileList;
+}
+
 async function main() {
-    console.log('💥 [Git] Checking repository status...');
+    // Cek apakah user menambahkan flag --all di terminal
+    const isFullSync = process.argv.includes('--all');
+    let filesToUpload = [];
 
-    // 1. Cek apakah ada perubahan yang belum di-commit
-    const status = runGitCommand('git status --porcelain');
+    if (isFullSync) {
+        console.log('📦 [Deploy] Mode: FULL SYNC (--all) aktif. Memindai seluruh file proyek...');
+        filesToUpload = await getAllFiles('.');
+    } else {
+        console.log('💥 [Git] Mode: DELTA SYNC. Memeriksa status repositori...');
+        const status = runGitCommand('git status --porcelain');
 
-    if (!status) {
-        console.log('🔄 [Git] Tree clean. No new changes detected. Exiting...');
-        return;
+        if (!status) {
+            console.log('🔄 [Git] Tree clean. Tidak ada perubahan baru. Memeriksa delta commit terakhir...');
+        } else {
+            const commitMessage = process.argv.find(arg => !arg.startsWith('-') && arg !== 'deploy.js')
+                || `deploy: sync auto ${new Date().toISOString().replace(/T/, ' ').replace(/\..+/, '')}`;
+
+            console.log('📦 [Git] Menyetor dan mengunci commit perubahan...');
+            runGitCommand('git add .');
+            runGitCommand(`git commit -m "${commitMessage}"`);
+            console.log(`✅ [Git] Berhasil commit: "${commitMessage}"`);
+        }
+
+        console.log('🔍 [Git] Mengurai berkas yang berubah dari commit terbaru...');
+        const changedFilesRaw = runGitCommand('git diff-tree -r --no-commit-id --name-only HEAD');
+
+        if (changedFilesRaw) {
+            filesToUpload = changedFilesRaw.split('\n').filter(file => {
+                if (!file) return false;
+                const firstPart = file.split(/[/\\]/)[0];
+                return !ignoreList.includes(firstPart) && fs.existsSync(file);
+            });
+        }
     }
-
-    // 2. Ambil argumen pesan commit dari terminal jika ada (misal: npm run push -- "feat: stiker")
-    const commitMessage = process.argv[2] || `deploy: sync auto ${new Date().toISOString().replace(/T/, ' ').replace(/\..+/, '')}`;
-
-    console.log('📦 [Git] Staging and committing changes...');
-    runGitCommand('git add .');
-    runGitCommand(`git commit -m "${commitMessage}"`);
-    console.log(`✅ [Git] Committed with message: "${commitMessage}"`);
-
-    // 3. Minta Git mendaftar file apa saja yang berubah di commit terakhir ini
-    console.log('🔍 [Git] Extracting changed files from the last commit...');
-    const changedFilesRaw = runGitCommand('git diff-tree -r --no-commit-id --name-only HEAD');
-
-    if (!changedFilesRaw) {
-        console.log('⚠️ [Git] Failed to retrieve changed files list.');
-        return;
-    }
-
-    // Filter file agar tidak membawa file yang masuk daftar ignore
-    const filesToUpload = changedFilesRaw.split('\n').filter(file => {
-        if (!file) return false;
-        const firstPart = file.split(/[/\\]/)[0];
-        return !ignoreList.includes(firstPart) && fs.existsSync(file);
-    });
 
     if (filesToUpload.length === 0) {
-        console.log('👍 [Deploy] All changed files are in the ignore list. Nothing to upload!');
+        console.log('👍 [Deploy] Tidak ada file yang perlu diunggah. Selesai.');
         return;
     }
 
-    // 4. Mulai proses upload SFTP untuk file pilihan saja
     const sftp = new Client();
     try {
-        console.log('\n⏳ Connecting to Pterodactyl SFTP...');
+        console.log(`\n⏳ Menyambungkan ke PTERODACTYL SFTP (Mengirim ${filesToUpload.length} file)...`);
         await sftp.connect(config);
-        console.log('✅ Connected! Preparing delta deployment...');
+        console.log('✅ Terhubung! Memulai proses sinkronisasi struktur berkas...');
 
         for (const localFile of filesToUpload) {
-            // Konversi path agar ramah dengan OS Linux di server Pterodactyl
+            // Ubah path Windows (\) ke Linux (/)
             const remoteFile = '/' + localFile.replace(/\\/g, '/');
             const remoteDir = path.dirname(remoteFile).replace(/\\/g, '/');
 
-            // Buat folder di server jika folder tujuan file tersebut belum ada
+            // Otomatis bikin folder di server jika belum ada
             if (remoteDir !== '/') {
                 const exists = await sftp.exists(remoteDir);
                 if (!exists) {
@@ -96,13 +106,13 @@ async function main() {
                 }
             }
 
-            console.log(`🚀 [Delta Push] ${localFile} -> ${remoteFile}`);
+            console.log(`🚀 [Pushing] ${localFile} -> ${remoteFile}`);
             await sftp.put(localFile, remoteFile);
         }
 
-        console.log('\n🎉 [Deploy] Delta sync success! Only changed files were pushed.');
+        console.log('\n🎉 [Deploy] Hore! Semua file sukses disinkronisasikan seutuhnya.');
     } catch (err) {
-        console.error('\n❌ [Deploy] Failed:', err.message);
+        console.error('\n❌ [Deploy] Proses gagal:', err.message);
     } finally {
         await sftp.end();
     }

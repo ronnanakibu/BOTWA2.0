@@ -5,13 +5,14 @@ import { logger } from '../utils/logger.js'
 export async function handleIncomingMessage(sock, { messages }) {
     try {
         const msg = messages[0]
-        if (!msg.message || msg.key.fromMe) return
+        // Abaikan jika struktur pesan kosong mentah dari server
+        if (!msg.message) return
 
         const from = msg.key.remoteJid
         const isGroup = from.endsWith('@g.us')
         const sender = isGroup ? msg.key.participant : from
 
-        // 🌟 LOGIKA UNWRAPPER: Bongkar bungkus jika pesan berjenis Ephemeral atau ViewOnce
+        // Bongkar isi pesan jika dibungkus pesan ephemeral atau viewonce
         let messageContent = msg.message
         const wrapperTypes = ['ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'documentWithCaptionMessage']
         const baseType = Object.keys(messageContent)[0]
@@ -22,32 +23,39 @@ export async function handleIncomingMessage(sock, { messages }) {
 
         if (!messageContent) return
 
-        // Ambil tipe asli pesan setelah dibongkar
         const type = Object.keys(messageContent)[0]
-
-        // Ekstrak teks perintah
         const body = messageContent?.conversation
             || messageContent?.extendedTextMessage?.text
             || messageContent?.imageMessage?.caption
             || messageContent?.videoMessage?.caption
             || ''
 
-        // Paksa console.log tampil di terminal Pterodactyl untuk keperluan debugging live
-        console.log(`📩 [Msg Received] From: ${sender} | Type: ${type} | Text: ${body}`)
+        // 🌟 LIVE TELEMETRI (Paling Atas): Cetak semua aktivitas chat sebelum disaring filter
+        console.log(`📩 [Event Triggered] From: ${sender} | FromMe: ${msg.key.fromMe} | Type: ${type} | Text: ${body}`)
 
+        // Filter 1: Abaikan jika pesan ini dikirim oleh akun bot itu sendiri
+        if (msg.key.fromMe) return
+
+        // Filter 2: Pastikan pesan diawali oleh prefix (! atau sesuai .env)
         const prefix = process.env.BOT_PREFIX || '!'
         if (!body.startsWith(prefix)) return
 
         const args = body.slice(prefix.length).trim().split(/ +/)
         const commandName = args.shift().toLowerCase()
 
+        console.log(`🔎 [Router] Mencari command: "${commandName}"`)
         const command = commands.get(commandName)
-        if (!command) return
 
+        if (!command) {
+            console.log(`⚠️ [Router] Command "${commandName}" tidak ditemukan di ram memori.`)
+            return
+        }
+
+        // 🌟 FIX: Objek Context (ctx) dihidupkan kembali secara utuh!
         const ctx = {
             sock,
             msg,
-            messageContent, // Kita sertakan pesan yang sudah dibongkar ke context
+            messageContent,
             from,
             sender,
             isGroup,
@@ -62,12 +70,11 @@ export async function handleIncomingMessage(sock, { messages }) {
             }
         }
 
-        console.log(`🚀 [Exec Command] Running: ${command.name} for ${sender}`)
+        console.log(`🚀 [Exec] Menjalankan perintah: ${command.name} untuk ${sender}`)
         await command.execute(ctx)
 
     } catch (err) {
-        // Selain masuk file log, paksa cetak ke konsol agar kamu tahu persis letak rusaknya
-        console.error('❌ Error inside message handler:', err.message)
+        console.error('❌ Error fatal di dalam message handler:', err.message)
         logger.error(err)
     }
 }
