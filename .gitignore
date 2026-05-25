@@ -1,0 +1,25 @@
+# Dependency directories
+node_modules/
+
+# Environment variables (contains credentials & API keys)
+.env
+.env.local
+.env.*.local
+
+# Storage directories (contains SQLite DBs, logs, and WhatsApp sessions)
+storage/sessions/
+storage/logs/
+storage/database/
+*.db
+*.db-journal
+*.db-wal
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
