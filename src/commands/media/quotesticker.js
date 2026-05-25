@@ -2,11 +2,11 @@
 import mediaService from '../../services/media.js'
 
 export default {
-    name: 'brat',
-    aliases: ['qs', 'qc', 'bratsticker', 'quote'],
+    name: 'anomali',
+    aliases: ['qs', 'qc', 'quote', 'anm'],
     category: 'media',
-    description: 'Mengubah teks langsung atau chat kutipan menjadi stiker BRAT hijau neon viral',
-    usage: '/brat <teks kamu> atau /brat (reply pesan teks target)',
+    description: 'Mengubah teks langsung atau chat kutipan menjadi stiker anomali minimalis reguler font',
+    usage: '/anomali <teks kamu> atau /anomali (reply pesan teks target)',
     cooldown: 3,
     permissions: ['user'],
     async execute(ctx) {
@@ -32,21 +32,21 @@ export default {
         }
 
         if (!targetText) {
-            return reply('⚠️ Mana kalimatnya, cuy? 😭\n\nKetik perintah beserta teks seperti */brat teks lu* atau balas chat orang lain pakai perintah */brat*!')
+            return reply('⚠️ Mana teksnya, cuy? 😭\n\nKetik perintah beserta teks seperti */anomali teks lu* atau balas chat orang lain pakai perintah */anomali*!')
         }
 
-        await reply('⏳ Sedang menyemprotkan cat hijau neon Brat generator...')
+        await reply('⏳ Merender stiker teks anomali minimalis...')
 
         try {
-            // 3. Proses teks ke Sharp Service versi Brat
-            const bratBuffer = await mediaService.toQuoteSticker(targetText)
+            // 3. Proses teks ke Sharp Service versi Anomali Tipis murni
+            const anomaliBuffer = await mediaService.toQuoteSticker(targetText)
 
-            // 4. Kirim hasilnya sebagai stiker
-            await replyMedia(bratBuffer, 'sticker')
+            // 4. Kirim hasilnya sebagai stiker berkas WebP
+            await replyMedia(anomaliBuffer, 'sticker')
 
         } catch (err) {
-            console.error('❌ Brat sticker command runtime error:', err.message)
-            await reply('❌ Gagal meracik stiker brat, coba cek teksnya lagi cuy!')
+            console.error('❌ Anomali sticker command runtime error:', err.message)
+            await reply('❌ Gagal meracik stiker anomali, coba cek teksnya lagi cuy!')
         }
     }
 }

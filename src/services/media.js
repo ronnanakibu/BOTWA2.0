@@ -29,14 +29,14 @@ class MediaService {
 
             fs.writeFileSync(configFile, minimalConfig, 'utf8')
             process.env.FONTCONFIG_FILE = configFile
-            console.log(`⚙️ [MediaService] Fontconfig ready at: ${configFile}`)
+            console.log(`⚙️ [MediaService] Fontconfig ready for Anomali engine.`)
         } catch (err) {
             console.error('❌ [MediaService] Gagal inisialisasi Fontconfig:', err.message)
         }
     }
 
     // ==========================================
-    // 🟢 REFACTOR TOTAL: BRAT ALBUM COVER GENERATOR
+    // 🔍 REFACTOR: LOGIKA PEMBUNGKUS TEXT ANOMALI
     // ==========================================
     #wrapText(text, maxCharsPerLine = 12) {
         const words = text.trim().split(/\s+/)
@@ -63,27 +63,26 @@ class MediaService {
     }
 
     /**
-     * Generator Stiker Tren Viral: brat text generator (Charli XCX style)
+     * Generator Stiker Anomali/POV Facebook (Teks Tipis, Rata Kiri, Kanvas Putih)
      */
     async toQuoteSticker(rawText) {
         try {
-            // Ciri khas Brat: Semuanya dipaksa huruf kecil murni (lowercase)
+            // Karakteristik 1: Sesuai contoh gambar, teks dipaksa huruf kecil murni
             const cleanText = rawText.trim().toLowerCase()
 
-            // Brat memiliki baris yang sangat sempit dan padat (max 11-12 karakter per baris)
-            const lines = this.#wrapText(cleanText, 11)
+            // Karakteristik 2: Rata kiri pendek teratur (max 12-13 karakter per baris)
+            const lines = this.#wrapText(cleanText, 12)
 
-            // Ukuran font Brat default-nya besar, tebal, tapi menyusut jika teksnya panjang sekali
-            let fontSize = 78
-            if (lines.length > 3) fontSize = 64
-            if (lines.length > 5) fontSize = 50
-            if (lines.length > 8) fontSize = 38
+            // Ukuran font dibuat pas dan lega (default 72px, menyusut tipis jika chat terlalu panjang)
+            let fontSize = 72
+            if (lines.length > 4) fontSize = 60
+            if (lines.length > 7) fontSize = 48
 
-            // Jarak antar baris dibuat super rapat (ciri khas cover brat)
-            const lineSpacing = fontSize * 0.96
+            // Jarak antar baris dibikin normal renggang khas ketikan standar browser
+            const lineSpacing = fontSize * 1.35
 
-            // Posisi awal teks dimulai dari koordinat agak atas kiri
-            let startY = 120
+            // Posisi awal Y ditaruh pas di pojok kiri atas (menyisakan ruang kosong besar di bawah)
+            let startY = 85
 
             let svgTextElements = ''
             lines.forEach((line, i) => {
@@ -94,51 +93,39 @@ class MediaService {
                     .replace(/>/g, '&gt;')
                     .replace(/"/g, '&quot;')
 
-                // Menggunakan Arial Narrow / Arial Black dengan letter-spacing minus (-) agar rapat berdempetan
+                // 🌟 PERBAIKAN VITAL: font-weight="normal" (Menghapus total efek BOLD tebal digital)
                 svgTextElements += `
-                <text x="55" y="${y}" 
-                    font-family="'Arial Narrow', Arial, sans-serif" 
-                    font-stretch="condensed"
-                    font-weight="900" 
+                <text x="35" y="${y}" 
+                    font-family="Arial, Helvetica, sans-serif" 
+                    font-weight="normal" 
                     font-size="${fontSize}px" 
                     fill="#000000"
-                    letter-spacing="-3px"
-                    filter="url(#bratBlur)">
+                    letter-spacing="-0.5px">
                     ${safeLine}
                 </text>\n`
             })
 
-            // Overlay SVG lengkap dengan filter efek 'sedikit blur/low-res' agar 100% mirip aslinya
             const svgOverlay = Buffer.from(`
             <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                    <filter id="bratBlur">
-                        <feGaussianBlur stdDeviation="0.4" result="blur" />
-                        <feMerge>
-                            <feMergeNode in="blur" />
-                            <feMergeNode in="SourceGraphic" />
-                        </feMerge>
-                    </filter>
-                </defs>
                 ${svgTextElements}
             </svg>`)
 
-            // Render kanvas dasar menggunakan kode warna Hijau Neon Brat asli (#8ace00)
+            // Render kanvas dengan background PUTIH BERSIH SOLID (r:255, g:255, b:255)
             return await sharp({
                 create: {
                     width: 512,
                     height: 512,
                     channels: 4,
-                    background: { r: 138, g: 206, b: 0, alpha: 1 } // #8ace00 (Brat Lime Green)
+                    background: { r: 255, g: 255, b: 255, alpha: 1 }
                 }
             })
                 .composite([{ input: svgOverlay, top: 0, left: 0 }])
-                .webp({ quality: 90 }) // Sedikit compression biar dapet tekstur lofi-nya
+                .webp({ quality: 95 })
                 .toBuffer()
 
         } catch (err) {
-            logger.error('❌ Error inside MediaService.toBratSticker:', err.message)
-            throw new Error('Gagal meracik stiker brat generator.')
+            logger.error('❌ Error inside MediaService.toAnomaliSticker:', err.message)
+            throw new Error('Gagal meracik stiker teks anomali.')
         }
     }
 
