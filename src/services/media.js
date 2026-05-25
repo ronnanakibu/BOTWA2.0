@@ -15,7 +15,7 @@ class MediaService {
                     fit: 'contain',
                     background: { r: 0, g: 0, b: 0, alpha: 0 } // Auto transparan background
                 })
-                .webp({ quality: 80 }) // Optimasi size stiker biar ringan didownload di HP
+                .webp({ quality: 80 }) // Optimasi kualitas dan ukuran berkas stiker
                 .toBuffer()
         } catch (err) {
             logger.error('❌ Error inside MediaService.toSticker:', err)

@@ -6,17 +6,17 @@ export default {
     name: 'sticker',
     aliases: ['s', 'stiker'],
     category: 'media',
-    description: 'Convert image or video to a clean WhatsApp sticker',
+    description: 'Convert image to a clean WhatsApp sticker',
     usage: '!sticker (caption atau reply gambar)',
     cooldown: 5,
     permissions: ['user'],
     async execute(ctx) {
         const { msg, type, reply, replyMedia } = ctx
 
-        // Check 1: Apakah pesan langsung berupa gambar?
+        // Cek apakah pesan langsung berupa gambar
         let isImage = type === 'imageMessage'
 
-        // Check 2: Apakah pesan meng-quote (reply) gambar orang lain?
+        // Cek apakah pesan berupa balasan (reply) terhadap gambar lain
         const quotedMsg = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage
         let isQuotedImage = quotedMsg && Object.keys(quotedMsg)[0] === 'imageMessage'
 
@@ -24,14 +24,14 @@ export default {
             return reply('⚠️ Kirim gambar dengan caption *!s* atau balas (reply) gambar yang sudah dikirim dengan perintah *!s*, cuy!')
         }
 
-        // Kirim status "loading" biar user gak ngira bot hang
+        // Tampilkan status indikator loading
         await reply('⏳ Sedang memproses stiker kamu, tunggu bentar...')
 
         try {
-            // Target pesan yang akan didownload medianya
+            // Tentukan target objek pesan yang akan diunduh medianya
             const targetMessage = isImage ? msg : { message: quotedMsg, key: msg.key }
 
-            // Download media menggunakan built-in helper Baileys
+            // Unduh file media biner dari server WhatsApp menggunakan built-in helper Baileys
             const buffer = await downloadMediaMessage(
                 targetMessage,
                 'buffer',
@@ -42,10 +42,10 @@ export default {
                 }
             )
 
-            // Lempar buffer gambar ke core processing service kita
+            // Konversi buffer gambar murni lewat pengolah Sharp Service kita
             const stickerBuffer = await mediaService.toSticker(buffer)
 
-            // Kirim balik ke user berupa tipe Sticker murni
+            // Kirim balik berkas stiker WebP ke chat tujuan menggunakan context helper
             await replyMedia(stickerBuffer, 'sticker')
 
         } catch (err) {
