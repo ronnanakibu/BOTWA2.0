@@ -5,54 +5,41 @@ import path from 'path'
 import { logger } from '../utils/logger.js'
 
 class MediaService {
-    #fontBase64 = ''
-
     constructor() {
-        this.#initFontconfig() // 🌟 Langkah 1: Jinakkan Fontconfig error di Linux server
-        this.#loadFontBiner()  // Langkah 2: Muat aset font impact mentah
+        this.#initFontconfig() // 🌟 Daftarkan folder font ke sistem indeks Linux
     }
 
     /**
-     * Mengatasi Fontconfig error (No such file: (null)) di server Pterodactyl
-     * dengan cara menyuntikkan template XML fonts.conf minimal langsung ke RAM environment.
+     * Menyuruh Fontconfig Linux membaca berkas fisik impact.ttf 
+     * langsung dari folder assets proyek kita.
      */
     #initFontconfig() {
         try {
             const configDir = path.resolve('./storage/database')
+            const fontDir = path.resolve('./src/assets/fonts')
+            const cacheDir = path.resolve('./storage/database/fontcache')
             const configFile = path.join(configDir, 'fonts.conf')
 
-            // Buat file fonts.conf tiruan jika belum ada di server
-            if (!fs.existsSync(configFile)) {
-                const minimalConfig = `<?xml version="1.0"?>
+            // Pastikan seluruh direktori penampung sudah tercipta
+            if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true })
+            if (!fs.existsSync(fontDir)) fs.mkdirSync(fontDir, { recursive: true })
+            if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
+
+            // 🌟 KUNCI UTAMA: Masukkan tag <dir> berisi path absolut folder font laptop kamu!
+            const minimalConfig = `<?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 <fontconfig>
-    <cachedir>/tmp/fontconfig-cache</cachedir>
+    <dir>${fontDir}</dir>
+    <cachedir>${cacheDir}</cachedir>
 </fontconfig>`
-                fs.writeFileSync(configFile, minimalConfig, 'utf8')
-            }
 
-            // Paksa sistem operasi container membaca file konfigurasi tiruan kita
+            fs.writeFileSync(configFile, minimalConfig, 'utf8')
+
+            // Paksa environment Linux membaca file konfigurasi pemetaan folder ini
             process.env.FONTCONFIG_FILE = configFile
-            console.log(`⚙️ [MediaService] Fontconfig environment secured at: ${configFile}`)
+            console.log(`⚙️ [MediaService] Fontconfig mendaftarkan folder fisik font: ${fontDir}`)
         } catch (err) {
-            console.error('❌ [MediaService] Gagal melakukan bypass Fontconfig:', err.message)
-        }
-    }
-
-    /**
-     * Membaca file font lokal impact.ttf dan mengonversinya ke string Base64
-     */
-    #loadFontBiner() {
-        try {
-            const fontPath = path.resolve('./src/assets/fonts/impact.ttf')
-            if (fs.existsSync(fontPath)) {
-                this.#fontBase64 = fs.readFileSync(fontPath).toString('base64')
-                console.log('✅ [MediaService] Font Impact sukses dikunci ke RAM (Base64 Portable Mode).')
-            } else {
-                console.log('⚠️ [MediaService] File impact.ttf tidak ditemukan di ./src/assets/fonts/. Memakai fallback font sistem.')
-            }
-        } catch (err) {
-            console.error('❌ [MediaService] Gagal memuat font biner:', err.message)
+            console.error('❌ [MediaService] Gagal inisialisasi Fontconfig:', err.message)
         }
     }
 
@@ -96,10 +83,11 @@ class MediaService {
                 .replace(/>/g, '&gt;')
                 .replace(/"/g, '&quot;')
 
+            // 🌟 SANGAT PENTING: font-family diarahkan langsung ke nama asli bawaan berkas yaitu "Impact"
             svgElements += `
             <text x="50%" y="${y}" 
                 text-anchor="middle" 
-                font-family="ImpactMeme" 
+                font-family="Impact" 
                 font-weight="bold" 
                 font-size="${fontSize}px" 
                 fill="white" 
@@ -125,27 +113,9 @@ class MediaService {
             const svgTopElements = this.#renderSvgText(topData.lines, topData.startY, topData.fontSize, topData.lineSpacing)
             const svgBottomElements = this.#renderSvgText(bottomData.lines, bottomData.startY, bottomData.fontSize, bottomData.lineSpacing)
 
-            let fontStyleRule = `
-            @font-face {
-                font-family: 'ImpactMeme';
-                src: local('Impact'), local('Arial');
-            }`
-
-            if (this.#fontBase64) {
-                fontStyleRule = `
-                @font-face {
-                    font-family: 'ImpactMeme';
-                    src: url(data:application/x-font-ttf;charset=utf-8;base64,${this.#fontBase64});
-                }`
-            }
-
+            // Canvas SVG kita buat super clean tanpa tumpangan @font-face biner lagi
             const svgOverlay = Buffer.from(`
             <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
-                <defs>
-                    <style>
-                        ${fontStyleRule}
-                    </style>
-                </defs>
                 ${svgTopElements}
                 ${svgBottomElements}
             </svg>`)
