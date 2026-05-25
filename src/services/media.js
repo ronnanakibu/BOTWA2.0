@@ -10,39 +10,36 @@ class MediaService {
     }
 
     /**
-         * Set ulang konfigurasi minimal tanpa mendaftarkan folder font eksternal
-         * agar engine Sharp murni memakai font standar bawaan OS Linux.
-         */
+     * Mendaftarkan folder assets font fisik ke runtime server Pterodactyl
+     */
     #initFontconfig() {
         try {
             const configDir = path.resolve('./storage/database')
+            const fontDir = path.resolve('./src/assets/fonts')
             const cacheDir = path.resolve('./storage/database/fontcache')
             const configFile = path.join(configDir, 'fonts.conf')
 
             if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true })
+            if (!fs.existsSync(fontDir)) fs.mkdirSync(fontDir, { recursive: true })
             if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
 
-            // 🌟 KUNCI: Kosongkan tag <dir>, biarkan engine mendeteksi default Arial/Sans-Serif Linux
             const minimalConfig = `<?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 <fontconfig>
+    <dir>${fontDir}</dir>
     <cachedir>${cacheDir}</cachedir>
 </fontconfig>`
 
             fs.writeFileSync(configFile, minimalConfig, 'utf8')
-
-            // Update env runtime server
             process.env.FONTCONFIG_FILE = configFile
-            console.log(`⚙️ [MediaService] Fontconfig default system unlocked.`)
+            console.log(`⚙️ [MediaService] Fontconfig ready. Locked folder: ${fontDir}`)
         } catch (err) {
-            console.error('❌ [MediaService] Gagal update Fontconfig:', err.message)
+            console.error('❌ [MediaService] Gagal inisialisasi Fontconfig:', err.message)
         }
     }
 
-    // ==========================================
-    // 🔍 REFACTOR: LOGIKA PEMBUNGKUS TEXT ANOMALI
-    // ==========================================
-    #wrapText(text, maxCharsPerLine = 12) {
+    // Pemotong baris sempit padat khas brat generator (max 11-12 karakter per baris)
+    #wrapText(text, maxCharsPerLine = 11) {
         const words = text.trim().split(/\s+/)
         let lines = []
         let currentLine = ''
@@ -67,26 +64,25 @@ class MediaService {
     }
 
     /**
-     * Generator Stiker Anomali/POV Facebook (Teks Tipis, Rata Kiri, Kanvas Putih)
+     * Generator Stiker Anomali Raksasa Padat Mepet Margin (Brat White Mode Style)
      */
     async toQuoteSticker(rawText) {
         try {
-            // Karakteristik 1: Sesuai contoh gambar, teks dipaksa huruf kecil murni
+            // Huruf kecil murni sesuai template asli
             const cleanText = rawText.trim().toLowerCase()
+            const lines = this.#wrapText(cleanText, 11)
 
-            // Karakteristik 2: Rata kiri pendek teratur (max 12-13 karakter per baris)
-            const lines = this.#wrapText(cleanText, 12)
+            // 🌟 TWEAK 1: Dongkrak base fontSize jadi raksasa penuh memenuhi kanvas
+            let fontSize = 105
+            if (lines.length > 3) fontSize = 82
+            if (lines.length > 5) fontSize = 64
+            if (lines.length > 8) fontSize = 46
 
-            // Ukuran font dibuat pas dan lega (default 72px, menyusut tipis jika chat terlalu panjang)
-            let fontSize = 72
-            if (lines.length > 4) fontSize = 60
-            if (lines.length > 7) fontSize = 48
+            // Jarak antar baris dibuat super rapat khas kompresi Brat
+            const lineSpacing = fontSize * 1.02
 
-            // Jarak antar baris dibikin normal renggang khas ketikan standar browser
-            const lineSpacing = fontSize * 1.35
-
-            // Posisi awal Y ditaruh pas di pojok kiri atas (menyisakan ruang kosong besar di bawah)
-            let startY = 85
+            // 🌟 TWEAK 2: Angkat posisi startY ke atas agar mepet margin atas
+            let startY = 90
 
             let svgTextElements = ''
             lines.forEach((line, i) => {
@@ -97,14 +93,14 @@ class MediaService {
                     .replace(/>/g, '&gt;')
                     .replace(/"/g, '&quot;')
 
-                // 🌟 PERBAIKAN VITAL: font-weight="normal" (Menghapus total efek BOLD tebal digital)
+                // 🌟 TWEAK 3: Atur x="25" biar mepet mentok ke kiri & perlebar letter-spacing minus (-3px) biar padat dempet
                 svgTextElements += `
-                <text x="35" y="${y}" 
-                    font-family="Arial, Helvetica, sans-serif" 
+                <text x="25" y="${y}" 
+                    font-family="'Arial Narrow', Arial, sans-serif" 
                     font-weight="normal" 
                     font-size="${fontSize}px" 
                     fill="#000000"
-                    letter-spacing="-0.5px">
+                    letter-spacing="-3px">
                     ${safeLine}
                 </text>\n`
             })
@@ -114,7 +110,6 @@ class MediaService {
                 ${svgTextElements}
             </svg>`)
 
-            // Render kanvas dengan background PUTIH BERSIH SOLID (r:255, g:255, b:255)
             return await sharp({
                 create: {
                     width: 512,
@@ -128,8 +123,8 @@ class MediaService {
                 .toBuffer()
 
         } catch (err) {
-            logger.error('❌ Error inside MediaService.toAnomaliSticker:', err.message)
-            throw new Error('Gagal meracik stiker teks anomali.')
+            logger.error('❌ Error inside MediaService.toQuoteSticker:', err.message)
+            throw new Error('Gagal meracik stiker teks anomali raksasa.')
         }
     }
 
@@ -174,7 +169,7 @@ class MediaService {
             const topData = this.#processTextAdaptive(cleanTop, false)
             const bottomData = this.#processTextAdaptive(cleanBottom, true)
             const svgTopElements = this.#renderSvgText(topData.lines, topData.startY, topData.fontSize, topData.lineSpacing)
-            const svgBottomElements = this.#renderSvgText(bottomData.lines, bottomData.startY, bottomData.fontSize, bottomData.lineSpacing)
+            const svgBottomElements = this.#renderSvgText(bottomData.lines, bottomData.setStatus, bottomData.fontSize, bottomData.lineSpacing)
             const svgOverlay = Buffer.from(`<svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">${svgTopElements}${svgBottomElements}</svg>`)
             return await sharp(bufferImage).resize(512, 512, { fit: 'cover', position: 'center' }).composite([{ input: svgOverlay, top: 0, left: 0 }]).webp({ quality: 85 }).toBuffer()
         } catch (err) {
