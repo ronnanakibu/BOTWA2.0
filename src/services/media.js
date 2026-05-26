@@ -163,7 +163,7 @@ class MediaService {
         // 🌟 JALUR KALIBRASI MUTLAK: Teks bawah dikunci dari koordinat aman 455px (bukan 485px/495px)
         // Ini memberikan space agar ekor font Impact tidak menabrak batas bawah kanvas Sharp
         const startY = isBottom
-            ? 455 - ((lines.length - 1) * lineSpacing)
+            ? 490 - ((lines.length - 1) * lineSpacing)
             : fontSize + 20
 
         return { lines, fontSize, startY, lineSpacing }
