@@ -188,7 +188,8 @@ class MediaService {
             const topData = this.#processTextAdaptive(cleanTop, false)
             const bottomData = this.#processTextAdaptive(cleanBottom, true)
             const svgTopElements = this.#renderSvgText(topData.lines, topData.startY, topData.fontSize, topData.lineSpacing)
-            const svgBottomElements = this.#renderSvgText(bottomData.lines, bottomData.setStatus, bottomData.fontSize, bottomData.lineSpacing)
+            // SESUDAH (fix)
+            const svgBottomElements = this.#renderSvgText(bottomData.lines, bottomData.startY, bottomData.fontSize, bottomData.lineSpacing)
             const svgOverlay = Buffer.from(`<svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">${svgTopElements}${svgBottomElements}</svg>`)
             return await sharp(bufferImage).resize(512, 512, { fit: 'cover', position: 'center' }).composite([{ input: svgOverlay, top: 0, left: 0 }]).webp({ quality: 85 }).toBuffer()
         } catch (err) {
