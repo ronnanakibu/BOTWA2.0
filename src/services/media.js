@@ -132,8 +132,9 @@ class MediaService {
     // LOGIKA MEME STICKER PHASE 1 (JANGAN DIHAPUS)
     // ==========================================
     /**
-     * Kalibrasi Ulang Logika Adaptif Teks Meme: Menjaga posisi teks bawah 
-     * tetap berada di lantai dasar kanvas 512x512 tanpa menindih objek tengah.
+    /**
+     * Kalibrasi Fix Teks Bawah Meme: Memberikan ruang padding aman (baseline offset) 
+     * agar teks bawah tidak mentok dinding kanvas Sharp 512x512 dan tidak mental ke atas.
      */
     #processTextAdaptive(text, isBottom = false) {
         if (!text) {
@@ -143,7 +144,7 @@ class MediaService {
         const words = text.trim().split(/\s+/)
         let lines = []
 
-        // Pembungkusan otomatis teks panjang menjadi maksimal 2 baris
+        // Otomatis bagi jadi 2 baris jika teks terlalu panjang
         if (text.length > 15 && words.length > 1) {
             const mid = Math.ceil(words.length / 2)
             lines.push(words.slice(0, mid).join(' '))
@@ -153,15 +154,16 @@ class MediaService {
         }
 
         const maxLineLength = Math.max(...lines.map(l => l.length))
-        // Kalkulasi fontSize agar pas dan tidak luber kesamping
+        // Kalkulasi font size adaptif
         let fontSize = Math.floor(490 / (maxLineLength * 0.55))
         fontSize = Math.max(35, Math.min(85, fontSize))
 
         const lineSpacing = fontSize * 1.05
 
-        // 🌟 FIX FIX FIX: Kalibrasi total titik koordinat Y teks bawah agar pas di lantai dasar
+        // 🌟 JALUR KALIBRASI MUTLAK: Teks bawah dikunci dari koordinat aman 455px (bukan 485px/495px)
+        // Ini memberikan space agar ekor font Impact tidak menabrak batas bawah kanvas Sharp
         const startY = isBottom
-            ? 485 - ((lines.length - 1) * lineSpacing)
+            ? 455 - ((lines.length - 1) * lineSpacing)
             : fontSize + 20
 
         return { lines, fontSize, startY, lineSpacing }
