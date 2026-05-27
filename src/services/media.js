@@ -182,7 +182,7 @@ class MediaService {
      * Baris terakhir dibiarkan rata kiri sesuai kaidah justify paragraf.
      */
     #renderBratText(lines, startY, fontSize, lineSpacing) {
-        const justifyWidth = 472
+        const justifyWidth = 490
         let svgElements = ''
 
         lines.forEach((line, i) => {
