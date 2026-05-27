@@ -2,17 +2,132 @@
 import sharp from 'sharp'
 import fs from 'fs'
 import path from 'path'
+import https from 'https'
 import { logger } from '../utils/logger.js'
+
+// ─────────────────────────────────────────────
+// EMOJI RESOLVER
+// Twemoji CDN → cache lokal → inject sebagai <image> di SVG
+// Ini satu-satunya cara yang reliable di librsvg (sharp)
+// karena librsvg tidak bisa render emoji dari font
+// ─────────────────────────────────────────────
+
+const EMOJI_CACHE_DIR = path.resolve('./storage/media/emoji-cache')
+const TWEMOJI_BASE = 'https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72'
+
+/**
+ * Konversi emoji character ke codepoint hex (format Twemoji).
+ * Contoh: 😂 → '1f602'
+ * Support emoji ZWJ sequence & variation selector.
+ */
+function emojiToCodepoint(emoji) {
+    const codepoints = []
+    const chars = [...emoji]
+    for (let i = 0; i < chars.length; i++) {
+        const cp = chars[i].codePointAt(0)
+        // Skip variation selector (U+FE0F) — Twemoji tidak pakai ini di filename
+        if (cp === 0xFE0F) continue
+        codepoints.push(cp.toString(16))
+    }
+    return codepoints.join('-')
+}
+
+/**
+ * Download emoji PNG dari Twemoji CDN ke cache lokal.
+ * Return path file lokal, atau null kalau gagal.
+ */
+async function fetchEmojiPng(emoji) {
+    if (!fs.existsSync(EMOJI_CACHE_DIR)) {
+        fs.mkdirSync(EMOJI_CACHE_DIR, { recursive: true })
+    }
+
+    const cp = emojiToCodepoint(emoji)
+    const cachePath = path.join(EMOJI_CACHE_DIR, `${cp}.png`)
+
+    // Sudah di-cache
+    if (fs.existsSync(cachePath) && fs.statSync(cachePath).size > 100) {
+        return cachePath
+    }
+
+    const url = `${TWEMOJI_BASE}/${cp}.png`
+
+    return new Promise((resolve) => {
+        const file = fs.createWriteStream(cachePath)
+        https.get(url, (res) => {
+            if (res.statusCode === 301 || res.statusCode === 302) {
+                file.close()
+                // Simple redirect follow
+                https.get(res.headers.location, (res2) => {
+                    res2.pipe(file)
+                    file.on('finish', () => { file.close(); resolve(cachePath) })
+                }).on('error', () => { fs.unlink(cachePath, () => { }); resolve(null) })
+                return
+            }
+            if (res.statusCode !== 200) {
+                file.close()
+                fs.unlink(cachePath, () => { })
+                resolve(null)
+                return
+            }
+            res.pipe(file)
+            file.on('finish', () => { file.close(); resolve(cachePath) })
+        }).on('error', () => {
+            fs.unlink(cachePath, () => { })
+            resolve(null)
+        })
+    })
+}
+
+/**
+ * Encode file PNG ke base64 data URI untuk embed di SVG.
+ */
+function pngToDataUri(filePath) {
+    const buf = fs.readFileSync(filePath)
+    return `data:image/png;base64,${buf.toString('base64')}`
+}
+
+/**
+ * Deteksi semua emoji dalam string.
+ * Return array of unique emoji characters.
+ */
+function detectEmojis(text) {
+    const matches = [...text.matchAll(
+        /\p{Emoji_Presentation}\p{Emoji_Modifier_Base}?\p{Emoji_Modifier}?(\u200D\p{Emoji_Presentation}\p{Emoji_Modifier_Base}?\p{Emoji_Modifier}?)*\uFE0F?/gu
+    )]
+    return [...new Set(matches.map(m => m[0]))]
+}
+
+/**
+ * Pre-fetch semua emoji yang ada di text ke cache lokal.
+ * Return Map<emoji, dataUri> untuk dipakai saat render SVG.
+ */
+async function prepareEmojiMap(text) {
+    const emojis = detectEmojis(text)
+    const map = new Map()
+
+    await Promise.all(emojis.map(async (emoji) => {
+        try {
+            const filePath = await fetchEmojiPng(emoji)
+            if (filePath) {
+                map.set(emoji, pngToDataUri(filePath))
+            }
+        } catch (e) {
+            // Gagal fetch — emoji akan di-skip saat render
+        }
+    }))
+
+    return map
+}
+
+// ─────────────────────────────────────────────
+// MEDIASERVICE
+// ─────────────────────────────────────────────
 
 class MediaService {
     constructor() {
         this.#initFontconfig()
     }
 
-    /**
-     * Mendaftarkan folder assets font fisik ke runtime server Pterodactyl.
-     * Sekaligus mendaftarkan Noto Color Emoji sebagai fallback emoji berwarna.
-     */
     #initFontconfig() {
         try {
             const configDir = path.resolve('./storage/database')
@@ -24,40 +139,20 @@ class MediaService {
             if (!fs.existsSync(fontDir)) fs.mkdirSync(fontDir, { recursive: true })
             if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
 
-            // Sertakan sistem font Linux + folder custom + Noto Emoji fallback
-            const minimalConfig = `<?xml version="1.0"?>
+            const config = `<?xml version="1.0"?>
 <!DOCTYPE fontconfig SYSTEM "fonts.dtd">
 <fontconfig>
     <dir>${fontDir}</dir>
-
     <dir>/usr/share/fonts</dir>
     <dir>/usr/local/share/fonts</dir>
-
     <cachedir>${cacheDir}</cachedir>
-
-    <alias>
-        <family>Arial Narrow</family>
-        <prefer><family>Arial Narrow</family></prefer>
-        <default><family>Noto Color Emoji</family></default>
-    </alias>
-    <alias>
-        <family>Impact</family>
-        <prefer><family>Impact</family></prefer>
-        <default><family>Noto Color Emoji</family></default>
-    </alias>
-
-    <match target="pattern">
-        <test name="family"><string>Noto Color Emoji</string></test>
-        <edit name="rgba" mode="assign"><const>rgb</const></edit>
-    </match>
 </fontconfig>`
 
-            fs.writeFileSync(configFile, minimalConfig, 'utf8')
+            fs.writeFileSync(configFile, config, 'utf8')
             process.env.FONTCONFIG_FILE = configFile
             console.log(`⚙️ [MediaService] Fontconfig ready → ${fontDir}`)
-            console.log(`⚙️ [MediaService] Emoji fallback: Noto Color Emoji`)
-        } catch (err) {
-            console.error('❌ [MediaService] Gagal inisialisasi Fontconfig:', err.message)
+        } catch (e) {
+            console.error('❌ [MediaService] Fontconfig init gagal:', e.message)
         }
     }
 
@@ -66,33 +161,39 @@ class MediaService {
     // ─────────────────────────────────────────────
 
     /**
-     * Word-wrap sempit khas Brat generator (max N karakter per baris).
-     * Emoji dihitung sebagai 2 karakter (lebar visual).
+     * Tokenisasi teks menjadi array token.
+     * Emoji dipertahankan sebagai satu token utuh.
+     * Spasi antar kata menjadi token ' '.
+     */
+    #tokenize(text) {
+        return [...text.matchAll(
+            /\p{Emoji_Presentation}\p{Emoji_Modifier_Base}?\p{Emoji_Modifier}?(\u200D\p{Emoji_Presentation})*\uFE0F?|\S+|\s+/gu
+        )].map(m => m[0])
+    }
+
+    /**
+     * Word-wrap dengan dukungan emoji sebagai token lebar.
+     * Emoji dihitung sebagai 2 karakter visual.
      */
     #wrapText(text, maxCharsPerLine = 11) {
-        const words = [...text.trim().matchAll(/\p{Emoji_Presentation}\p{Emoji_Modifier}*|\p{Emoji}\uFE0F|\S+/gu)]
-            .map(m => m[0])
+        const words = this.#tokenize(text).filter(t => t.trim())
+        const visualLen = str => [...str].reduce((n, ch) => n + (ch.codePointAt(0) > 0x2000 ? 2 : 1), 0)
 
         let lines = []
         let currentLine = ''
-
-        const visualLen = str => [...str].reduce((n, ch) => {
-            const cp = ch.codePointAt(0)
-            return n + (cp > 0x2000 ? 2 : 1)
-        }, 0)
 
         words.forEach(word => {
             const wLen = visualLen(word)
             const lineLen = visualLen(currentLine)
 
             if (wLen > maxCharsPerLine) {
-                if (currentLine) lines.push(currentLine.trim())
+                if (currentLine.trim()) lines.push(currentLine.trim())
                 lines.push(word)
                 currentLine = ''
                 return
             }
             if (lineLen + wLen > maxCharsPerLine) {
-                lines.push(currentLine.trim())
+                if (currentLine.trim()) lines.push(currentLine.trim())
                 currentLine = word + ' '
             } else {
                 currentLine += word + ' '
@@ -102,20 +203,115 @@ class MediaService {
         return lines
     }
 
-    /**
-     * Escape karakter XML-unsafe di teks SVG.
-     */
     #escapeXml(str) {
+        // Strip emoji dari teks — emoji akan dirender sebagai <image> terpisah
         return str
+            .replace(/\p{Emoji_Presentation}\p{Emoji_Modifier_Base}?\p{Emoji_Modifier}?(\u200D\p{Emoji_Presentation})*\uFE0F?/gu, '')
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
+            .trim()
     }
 
     /**
-     * Kalkulasi font size adaptif + posisi startY untuk meme (top/bottom).
+     * Render satu baris teks + emoji inline sebagai SVG elements.
+     * Teks di-render sebagai <text>, emoji sebagai <image> PNG.
+     *
+     * @param {string} line - teks baris (bisa ada emoji)
+     * @param {number} y - posisi Y baseline
+     * @param {number} fontSize - ukuran font
+     * @param {object} opts - { x, textAnchor, fontFamily, fontWeight, fill, stroke, strokeWidth, emojiMap, justify, justifyWidth, isLast }
      */
+    #renderLine(line, y, fontSize, opts) {
+        const {
+            x = 25,
+            fontFamily = "'Arial Narrow', Arial, sans-serif",
+            fontWeight = 'normal',
+            fill = '#000000',
+            stroke = null,
+            strokeWidth = '0',
+            emojiMap = new Map(),
+            justify = false,
+            justifyWidth = 472,
+            isLast = true,
+            letterSpacing = '-2px'
+        } = opts
+
+        const tokens = this.#tokenize(line)
+        const emojiSize = fontSize * 1.1  // Emoji sedikit lebih besar dari cap height
+        let elements = ''
+
+        // Pisahkan token jadi segmen teks dan segmen emoji
+        // lalu render dalam <tspan> + <image> berurutan
+        // Untuk Brat style: pakai SVG <text> dengan tspan per segmen
+        // Untuk justify: kalau bukan baris terakhir, pakai textLength
+
+        // Cek apakah baris ini punya emoji
+        const hasEmoji = tokens.some(t => emojiMap.has(t.trim()) || detectEmojis(t).length > 0)
+
+        if (!hasEmoji) {
+            // Pure teks — render normal dengan justify kalau perlu
+            const safeText = this.#escapeXml(line)
+            const justifyAttr = (justify && !isLast) ? `textLength="${justifyWidth}" lengthAdjust="spacing"` : ''
+            const strokeAttr = stroke ? `stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round" paint-order="stroke fill"` : ''
+
+            elements += `<text x="${x}" y="${y}"
+                font-family="${fontFamily}"
+                font-weight="${fontWeight}"
+                font-size="${fontSize}px"
+                fill="${fill}"
+                letter-spacing="${letterSpacing}"
+                ${strokeAttr}
+                ${justifyAttr}>${safeText}</text>\n`
+        } else {
+            // Mixed teks + emoji — render dengan pendekatan hybrid:
+            // Teks sebagai <text>, emoji sebagai <image> yang di-overlap
+            // Karena SVG librsvg tidak support inline emoji font,
+            // kita render teks dulu (tanpa emoji), lalu overlay emoji di posisi akhir baris
+
+            // Hitung berapa token teks vs emoji
+            const textOnly = tokens.filter(t => !detectEmojis(t).length).join(' ').trim()
+            const emojisInLine = tokens.filter(t => detectEmojis(t).length > 0)
+
+            // Render teks (tanpa emoji)
+            const safeText = this.#escapeXml(textOnly)
+            // Untuk baris dengan emoji, skip justify (terlalu kompleks untuk mixed)
+            const strokeAttr = stroke ? `stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round" paint-order="stroke fill"` : ''
+
+            if (safeText) {
+                elements += `<text x="${x}" y="${y}"
+                    font-family="${fontFamily}"
+                    font-weight="${fontWeight}"
+                    font-size="${fontSize}px"
+                    fill="${fill}"
+                    letter-spacing="${letterSpacing}"
+                    ${strokeAttr}>${safeText}</text>\n`
+            }
+
+            // Overlay emoji di akhir baris (kanan kanvas atau posisi estimasi)
+            // Estimasi lebar teks: avg char width = fontSize * 0.55
+            const textWidth = [...textOnly].length * fontSize * 0.52
+            let emojiX = x + textWidth + (safeText ? fontSize * 0.2 : 0)
+            const emojiY = y - emojiSize * 0.85  // Align top dengan cap height
+
+            emojisInLine.forEach(emoji => {
+                const dataUri = emojiMap.get(emoji.trim()) ?? emojiMap.get(detectEmojis(emoji)[0])
+                if (dataUri) {
+                    elements += `<image
+                        href="${dataUri}"
+                        x="${emojiX}"
+                        y="${emojiY}"
+                        width="${emojiSize}"
+                        height="${emojiSize}"/>\n`
+                    emojiX += emojiSize * 1.1
+                }
+            })
+        }
+
+        return elements
+    }
+
     #processTextAdaptive(text, isBottom = false) {
         if (!text) return { lines: [], fontSize: 80, startY: 0, lineSpacing: 0 }
 
@@ -135,77 +331,11 @@ class MediaService {
         fontSize = Math.max(35, Math.min(85, fontSize))
 
         const lineSpacing = fontSize * 1.05
-
-        // Bottom: anchor dari 485px ke atas agar pas di lantai dasar kanvas Sharp
         const startY = isBottom
-            ? 485 - ((lines.length - 1) * lineSpacing)
+            ? 492 - ((lines.length - 1) * lineSpacing)
             : fontSize + 20
 
         return { lines, fontSize, startY, lineSpacing }
-    }
-
-    // ─────────────────────────────────────────────
-    // SVG RENDER HELPERS
-    // ─────────────────────────────────────────────
-
-    /**
-     * 🌟 FIX SAKRAL: Mengembalikan Teks Meme ke Rata Tengah (Center Aligned)
-     * Atribut textLength justify dicopot total agar font Impact kembali padat natural.
-     */
-    #renderMemeText(lines, startY, fontSize, lineSpacing) {
-        const strokeWidth = fontSize > 60 ? '8' : '5'
-        let svgElements = ''
-
-        lines.forEach((line, i) => {
-            const y = startY + (i * lineSpacing)
-            const safe = this.#escapeXml(line)
-
-            svgElements += `
-            <text
-                x="50%"
-                y="${y}"
-                text-anchor="middle"
-                font-family="Impact, 'Arial Narrow', 'Noto Color Emoji', sans-serif"
-                font-weight="bold"
-                font-size="${fontSize}px"
-                fill="white"
-                stroke="black"
-                stroke-width="${strokeWidth}"
-                stroke-linejoin="round"
-                paint-order="stroke fill">${safe}</text>\n`
-        })
-        return svgElements
-    }
-
-    /**
-     * Render SVG teks Brat style (hitam, lowercase, justify penuh).
-     * Baris terakhir dibiarkan rata kiri sesuai kaidah justify paragraf.
-     */
-    #renderBratText(lines, startY, fontSize, lineSpacing) {
-        const justifyWidth = 490
-        let svgElements = ''
-
-        lines.forEach((line, i) => {
-            const y = startY + (i * lineSpacing)
-            const safe = this.#escapeXml(line)
-            const isLast = i === lines.length - 1
-
-            const justifyAttr = (!isLast && lines.length > 1)
-                ? `textLength="${justifyWidth}" lengthAdjust="spacing"`
-                : ''
-
-            svgElements += `
-            <text
-                x="25"
-                y="${y}"
-                font-family="'Arial Narrow', Arial, 'Noto Color Emoji', sans-serif"
-                font-weight="normal"
-                font-size="${fontSize}px"
-                fill="#000000"
-                letter-spacing="-2px"
-                ${justifyAttr}>${safe}</text>\n`
-        })
-        return svgElements
     }
 
     // ─────────────────────────────────────────────
@@ -213,8 +343,9 @@ class MediaService {
     // ─────────────────────────────────────────────
 
     /**
-     * Buat stiker teks Brat/anomali dari plain text.
+     * Stiker teks Brat/anomali.
      * Background putih, font hitam lowercase, justify penuh.
+     * Emoji di-render sebagai Twemoji PNG (inline di SVG).
      */
     async toQuoteSticker(rawText) {
         try {
@@ -229,33 +360,46 @@ class MediaService {
             const lineSpacing = fontSize * 1.05
             const startY = 90
 
-            const svgText = this.#renderBratText(lines, startY, fontSize, lineSpacing)
+            // Pre-fetch semua emoji yang ada di text
+            const emojiMap = await prepareEmojiMap(cleanText)
 
-            const svgOverlay = Buffer.from(`
-            <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
-                ${svgText}
+            let svgContent = ''
+            lines.forEach((line, i) => {
+                const y = startY + (i * lineSpacing)
+                const isLast = i === lines.length - 1
+                svgContent += this.#renderLine(line, y, fontSize, {
+                    x: 25,
+                    fontFamily: "'Arial Narrow', Arial, sans-serif",
+                    fontWeight: 'normal',
+                    fill: '#000000',
+                    emojiMap,
+                    justify: true,
+                    justifyWidth: 472,
+                    isLast,
+                    letterSpacing: '-2px'
+                })
+            })
+
+            const svg = Buffer.from(`<svg width="512" height="512" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+                ${svgContent}
             </svg>`)
 
             return await sharp({
-                create: {
-                    width: 512,
-                    height: 512,
-                    channels: 4,
-                    background: { r: 255, g: 255, b: 255, alpha: 1 }
-                }
+                create: { width: 512, height: 512, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 1 } }
             })
-                .composite([{ input: svgOverlay, top: 0, left: 0 }])
+                .composite([{ input: svg, top: 0, left: 0 }])
                 .webp({ quality: 95 })
                 .toBuffer()
 
-        } catch (err) {
-            logger.error('❌ toQuoteSticker error:', err.message)
+        } catch (e) {
+            logger.error('❌ toQuoteSticker error:', e.message)
             throw new Error('Gagal meracik stiker brat.')
         }
     }
 
     /**
-     * Buat stiker meme dari gambar + teks atas/bawah Impact style (Rata Tengah).
+     * Stiker meme dari gambar + teks atas/bawah Impact style.
+     * Emoji di-render sebagai Twemoji PNG (inline di SVG).
      */
     async toMemeSticker(bufferImage, topText = '', bottomText = '') {
         try {
@@ -265,23 +409,61 @@ class MediaService {
             const topData = this.#processTextAdaptive(cleanTop, false)
             const bottomData = this.#processTextAdaptive(cleanBottom, true)
 
-            const svgTop = this.#renderMemeText(topData.lines, topData.startY, topData.fontSize, topData.lineSpacing)
-            const svgBottom = this.#renderMemeText(bottomData.lines, bottomData.startY, bottomData.fontSize, bottomData.lineSpacing)
+            // Pre-fetch emoji dari kedua teks
+            const emojiMap = await prepareEmojiMap(cleanTop + ' ' + cleanBottom)
 
-            const svgOverlay = Buffer.from(`
-            <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
-                ${svgTop}
-                ${svgBottom}
+            let svgContent = ''
+
+            // Render top text
+            topData.lines.forEach((line, i) => {
+                const y = topData.startY + (i * topData.lineSpacing)
+                const isLast = i === topData.lines.length - 1
+                svgContent += this.#renderLine(line, y, topData.fontSize, {
+                    x: 256,  // center (text-anchor middle)
+                    fontFamily: "Impact, 'Arial Narrow', sans-serif",
+                    fontWeight: 'bold',
+                    fill: 'white',
+                    stroke: 'black',
+                    strokeWidth: topData.fontSize > 60 ? '8' : '5',
+                    emojiMap,
+                    justify: true,
+                    justifyWidth: 490,
+                    isLast,
+                    letterSpacing: '0px'
+                })
+            })
+
+            // Render bottom text
+            bottomData.lines.forEach((line, i) => {
+                const y = bottomData.startY + (i * bottomData.lineSpacing)
+                const isLast = i === bottomData.lines.length - 1
+                svgContent += this.#renderLine(line, y, bottomData.fontSize, {
+                    x: 256,
+                    fontFamily: "Impact, 'Arial Narrow', sans-serif",
+                    fontWeight: 'bold',
+                    fill: 'white',
+                    stroke: 'black',
+                    strokeWidth: bottomData.fontSize > 60 ? '8' : '5',
+                    emojiMap,
+                    justify: true,
+                    justifyWidth: 490,
+                    isLast,
+                    letterSpacing: '0px'
+                })
+            })
+
+            const svg = Buffer.from(`<svg width="512" height="512" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+                ${svgContent}
             </svg>`)
 
             return await sharp(bufferImage)
                 .resize(512, 512, { fit: 'cover', position: 'center' })
-                .composite([{ input: svgOverlay, top: 0, left: 0 }])
+                .composite([{ input: svg, top: 0, left: 0 }])
                 .webp({ quality: 85 })
                 .toBuffer()
 
-        } catch (err) {
-            logger.error('❌ toMemeSticker error:', err.message)
+        } catch (e) {
+            logger.error('❌ toMemeSticker error:', e.message)
             throw new Error('Gagal memproses stiker meme.')
         }
     }
