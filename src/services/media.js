@@ -96,7 +96,7 @@ class MediaService {
                 // Jika baris terakhir, biarkan rata kiri normal (sesuai kaidah paragraf justify asli).
                 const isLastLine = i === lines.length - 1
                 const justifyAttr = (!isLastLine && lines.length > 1)
-                    ? `textLength="455" lengthAdjust="spacing"`
+                    ? `textLength="472" lengthAdjust="spacing"`
                     : ''
 
                 svgTextElements += `
