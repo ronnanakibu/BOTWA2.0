@@ -7,17 +7,19 @@ import { logger } from '../utils/logger.js'
 
 // ─────────────────────────────────────────────
 // EMOJI RESOLVER
-// Twemoji CDN → cache lokal → inject sebagai <image> di SVG
+// Noto Emoji (Google) CDN → cache lokal → inject sebagai <image> di SVG
 // Ini satu-satunya cara yang reliable di librsvg (sharp)
 // karena librsvg tidak bisa render emoji dari font
 // ─────────────────────────────────────────────
 
 const EMOJI_CACHE_DIR = path.resolve('./storage/media/emoji-cache')
-const TWEMOJI_BASE = 'https://cdn.jsdelivr.net/gh/twitter/twemoji@latest/assets/72x72'
+
+// Google Noto Emoji — rounded modern style, 128px for better quality
+const NOTO_BASE = 'https://raw.githubusercontent.com/googlefonts/noto-emoji/main/png/128'
 
 /**
- * Konversi emoji character ke codepoint hex (format Twemoji).
- * Contoh: 😂 → '1f602'
+ * Konversi emoji character ke codepoint hex (format Noto Emoji).
+ * Contoh: 😂 → 'emoji_u1f602'
  * Support emoji ZWJ sequence & variation selector.
  */
 function emojiToCodepoint(emoji) {
@@ -25,15 +27,15 @@ function emojiToCodepoint(emoji) {
     const chars = [...emoji]
     for (let i = 0; i < chars.length; i++) {
         const cp = chars[i].codePointAt(0)
-        // Skip variation selector (U+FE0F) — Twemoji tidak pakai ini di filename
+        // Skip variation selector (U+FE0F) — Noto tidak pakai ini di filename
         if (cp === 0xFE0F) continue
         codepoints.push(cp.toString(16))
     }
-    return codepoints.join('-')
+    return 'emoji_u' + codepoints.join('_')
 }
 
 /**
- * Download emoji PNG dari Twemoji CDN ke cache lokal.
+ * Download emoji PNG dari Noto Emoji (Google) ke cache lokal.
  * Return path file lokal, atau null kalau gagal.
  */
 async function fetchEmojiPng(emoji) {
@@ -49,7 +51,7 @@ async function fetchEmojiPng(emoji) {
         return cachePath
     }
 
-    const url = `${TWEMOJI_BASE}/${cp}.png`
+    const url = `${NOTO_BASE}/${cp}.png`
 
     return new Promise((resolve) => {
         const file = fs.createWriteStream(cachePath)
@@ -345,7 +347,7 @@ class MediaService {
     /**
      * Stiker teks Brat/anomali.
      * Background putih, font hitam lowercase, justify penuh.
-     * Emoji di-render sebagai Twemoji PNG (inline di SVG).
+     * Emoji di-render sebagai Noto Emoji PNG (inline di SVG).
      */
     async toQuoteSticker(rawText) {
         try {
@@ -399,7 +401,7 @@ class MediaService {
 
     /**
      * Stiker meme dari gambar + teks atas/bawah Impact style.
-     * Emoji di-render sebagai Twemoji PNG (inline di SVG).
+     * Emoji di-render sebagai Noto Emoji PNG (inline di SVG).
      */
     async toMemeSticker(bufferImage, topText = '', bottomText = '') {
         try {
