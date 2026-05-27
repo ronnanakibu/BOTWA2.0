@@ -285,21 +285,31 @@ class MediaService {
     async toQuoteSticker(rawText) {
         try {
             const cleanText = rawText.trim().toLowerCase()
-            const lines = this.#wrapText(cleanText, 11)
 
-            let fontSize = 105
-            if (lines.length > 3) fontSize = 82
-            if (lines.length > 5) fontSize = 64
-            if (lines.length > 8) fontSize = 46
+            // 🌟 FIX 1: Dongkrak limit baris jadi 15 karakter biar "ternyata besok" muat 1 baris
+            const lines = this.#wrapText(cleanText, 15)
+
+            // 🌟 FIX 2: Hitung font size adaptif biar teks panjang gak nabrak dinding/terpotong
+            const maxVisualLen = Math.max(...lines.map(l => {
+                return [...l].reduce((n, ch) => n + (ch.codePointAt(0) > 0x2000 ? 2 : 1), 0)
+            }))
+
+            // 462px = Lebar margin aman. 0.43 = Ratio kurus Arial Narrow
+            let fontSize = Math.floor(462 / (maxVisualLen * 0.43))
+            fontSize = Math.max(46, Math.min(115, fontSize))
 
             const lineSpacing = fontSize * 1.05
-            const startY = 90
+
+            // 🌟 FIX 3: Auto-Center Vertikal! Biar teksnya selalu cantik presisi di tengah kanvas
+            const totalTextHeight = lines.length * lineSpacing
+            const startY = (512 - totalTextHeight) / 2 + (fontSize * 0.75)
 
             const emojiMap = await prepareEmojiMap(cleanText)
 
             let svgContent = ''
             lines.forEach((line, i) => {
                 const y = startY + (i * lineSpacing)
+
                 svgContent += this.#renderLine(line, y, fontSize, {
                     x: 25,
                     textAnchor: 'start',
@@ -327,7 +337,6 @@ class MediaService {
             throw new Error('Gagal meracik stiker brat.')
         }
     }
-
     async toMemeSticker(bufferImage, topText = '', bottomText = '') {
         try {
             const cleanTop = topText.trim().toUpperCase()
