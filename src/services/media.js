@@ -20,17 +20,11 @@ function emojiToCodepoint(emoji) {
 }
 
 async function fetchEmojiPng(emoji) {
-    if (!fs.existsSync(EMOJI_CACHE_DIR)) {
-        fs.mkdirSync(EMOJI_CACHE_DIR, { recursive: true })
-    }
-
+    if (!fs.existsSync(EMOJI_CACHE_DIR)) fs.mkdirSync(EMOJI_CACHE_DIR, { recursive: true })
     const cp = emojiToCodepoint(emoji)
     const cachePath = path.join(EMOJI_CACHE_DIR, `${cp}.png`)
 
-    if (fs.existsSync(cachePath) && fs.statSync(cachePath).size > 100) {
-        return cachePath
-    }
-
+    if (fs.existsSync(cachePath) && fs.statSync(cachePath).size > 100) return cachePath
     const url = `${NOTO_BASE}/${cp}.png`
 
     return new Promise((resolve) => {
@@ -64,28 +58,22 @@ function pngToDataUri(filePath) {
     return `data:image/png;base64,${buf.toString('base64')}`
 }
 
+const EMOJI_REGEX = /\p{Emoji_Presentation}\p{Emoji_Modifier_Base}?\p{Emoji_Modifier}?(\u200D\p{Emoji_Presentation}\p{Emoji_Modifier_Base}?\p{Emoji_Modifier}?)*\uFE0F?/gu;
+
 function detectEmojis(text) {
-    const matches = [...text.matchAll(
-        /\p{Emoji_Presentation}\p{Emoji_Modifier_Base}?\p{Emoji_Modifier}?(\u200D\p{Emoji_Presentation}\p{Emoji_Modifier_Base}?\p{Emoji_Modifier}?)*\uFE0F?/gu
-    )]
+    const matches = [...text.matchAll(EMOJI_REGEX)]
     return [...new Set(matches.map(m => m[0]))]
 }
 
 async function prepareEmojiMap(text) {
     const emojis = detectEmojis(text)
     const map = new Map()
-
     await Promise.all(emojis.map(async (emoji) => {
         try {
             const filePath = await fetchEmojiPng(emoji)
-            if (filePath) {
-                map.set(emoji, pngToDataUri(filePath))
-            }
-        } catch (e) {
-            // Skip
-        }
+            if (filePath) map.set(emoji, pngToDataUri(filePath))
+        } catch (e) { }
     }))
-
     return map
 }
 
@@ -122,20 +110,16 @@ class MediaService {
         }
     }
 
-    #tokenize(text) {
-        return [...text.matchAll(
-            /\p{Emoji_Presentation}\p{Emoji_Modifier_Base}?\p{Emoji_Modifier}?(\u200D\p{Emoji_Presentation})*\uFE0F?|\S+|\s+/gu
-        )].map(m => m[0])
-    }
-
     #wrapText(text, maxCharsPerLine = 11) {
-        const words = this.#tokenize(text).filter(t => t.trim())
+        // Trik injeksi spasi: pisahkan paksa emoji dari kata agar tidak menyatu
+        const spaced = text.replace(EMOJI_REGEX, (m) => ` ${m} `)
+        const tokens = spaced.trim().split(/\s+/).filter(Boolean)
         const visualLen = str => [...str].reduce((n, ch) => n + (ch.codePointAt(0) > 0x2000 ? 2 : 1), 0)
 
         let lines = []
         let currentLine = ''
 
-        words.forEach(word => {
+        tokens.forEach(word => {
             const wLen = visualLen(word)
             const lineLen = visualLen(currentLine)
 
@@ -158,7 +142,6 @@ class MediaService {
 
     #escapeXml(str) {
         return str
-            .replace(/\p{Emoji_Presentation}\p{Emoji_Modifier_Base}?\p{Emoji_Modifier}?(\u200D\p{Emoji_Presentation})*\uFE0F?/gu, '')
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')
@@ -185,8 +168,6 @@ class MediaService {
         fontSize = Math.max(35, Math.min(85, fontSize))
 
         const lineSpacing = fontSize * 1.05
-
-        // Kembalikan koordinat Y aman lantai dasar meme ke 485px (Rata Tengah)
         const startY = isBottom
             ? 485 - ((lines.length - 1) * lineSpacing)
             : fontSize + 20
@@ -195,104 +176,103 @@ class MediaService {
     }
 
     // ─────────────────────────────────────────────
-    // CORE INLINE SVG RENDERER (THE MAGIC HAPPENS HERE)
+    // CORE INLINE SVG RENDERER (MANUAL VECTOR PLOTTING ENGINE)
     // ─────────────────────────────────────────────
 
     #renderLine(line, y, fontSize, opts) {
         const {
             x = 25,
-            textAnchor = 'start', // Default start untuk brat, middle untuk meme
+            textAnchor = 'start', // Start = Brat, Middle = Meme
             fontFamily = "'Arial Narrow', Arial, sans-serif",
             fontWeight = 'normal',
             fill = '#000000',
             stroke = null,
             strokeWidth = '0',
             emojiMap = new Map(),
-            justify = false,
-            justifyWidth = 472,
-            isLast = true,
             letterSpacing = '-2px'
         } = opts
 
-        const tokens = this.#tokenize(line)
-        const emojiSize = fontSize * 1.05
+        // Pisahkan kalimat jadi per kata/emoji mutlak
+        const spaced = line.replace(EMOJI_REGEX, (m) => ` ${m} `)
+        const tokens = spaced.trim().split(/\s+/).filter(Boolean)
+
         let elements = ''
-
-        const emojisInLine = tokens.filter(t => detectEmojis(t).length > 0)
-        const hasEmoji = emojisInLine.length > 0
-
-        // Ambil hanya komponen teks murni
-        const textOnly = tokens.filter(t => !detectEmojis(t).length).join(' ').trim()
-        const safeText = this.#escapeXml(textOnly)
         const strokeAttr = stroke ? `stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linejoin="round" paint-order="stroke fill"` : ''
 
-        if (!hasEmoji) {
-            // JALUR 1: PURE TEXT (BRAT/MEME NORMAL)
-            const justifyAttr = (justify && !isLast) ? `textLength="${justifyWidth}" lengthAdjust="spacing"` : ''
+        // 🌟 JALUR 1: STIKER MEME (RATA TENGAH NORMAL)
+        if (textAnchor === 'middle') {
+            const textOnly = tokens.filter(t => detectEmojis(t).length === 0).join(' ').trim()
+            const emojisInLine = tokens.filter(t => detectEmojis(t).length > 0)
+            const safeText = this.#escapeXml(textOnly)
 
             elements += `
             <text x="${x}" y="${y}"
-                text-anchor="${textAnchor}"
+                text-anchor="middle"
                 font-family="${fontFamily}"
                 font-weight="${fontWeight}"
                 font-size="${fontSize}px"
                 fill="${fill}"
-                letter-spacing="${letterSpacing}"
-                ${strokeAttr}
-                ${justifyAttr}>${safeText}</text>\n`
-        } else {
-            // JALUR 2: MIXED TEXT + EMOJI INLINE (ANTI-RENGGANG & SUPPORT JUSTIFY)
+                ${strokeAttr}>${safeText}</text>\n`
+
+            const emojiSize = fontSize * 1.05
+            const estTextWidth = [...safeText].length * fontSize * 0.52
+            let emojiX = x + (estTextWidth / 2) + 10
             const emojiY = y - emojiSize * 0.84
 
-            if (textAnchor === 'middle') {
-                // A. KASUS STIKER MEME (Rata Tengah + Ada Emoji)
-                // Kita biarkan text-anchor middle mengurus penempatan teks, emoji di-overlay di posisi kanan teks
-                elements += `
-                <text x="${x}" y="${y}"
-                    text-anchor="middle"
-                    font-family="${fontFamily}"
-                    font-weight="${fontWeight}"
-                    font-size="${fontSize}px"
-                    fill="${fill}"
-                    ${strokeAttr}>${safeText}</text>\n`
+            emojisInLine.forEach(emoji => {
+                const dataUri = emojiMap.get(emoji.trim()) ?? emojiMap.get(detectEmojis(emoji)[0])
+                if (dataUri) {
+                    elements += `<image href="${dataUri}" x="${emojiX}" y="${emojiY}" width="${emojiSize}" height="${emojiSize}"/>\n`
+                    emojiX += emojiSize * 1.05
+                }
+            })
+            return elements
+        }
 
-                // Estimasi offset tengah agar emoji nempel pas setelah kata berakhir
-                const estTextWidth = [...safeText].length * fontSize * 0.48
-                let emojiX = x + (estTextWidth / 2) + 10
+        // 🌟 JALUR 2: STIKER BRAT (HARDCORE MANUAL JUSTIFY)
+        // Di sini kita hitung paksa posisi X masing-masing kata agar melar rata kanan-kiri murni!
+        const justifyWidth = 462 // Lebar kanvas aktif (Margin Kiri 25px, Kanan 25px)
+        const emojiSize = fontSize * 1.05
 
-                emojisInLine.forEach(emoji => {
-                    const dataUri = emojiMap.get(emoji.trim()) ?? emojiMap.get(detectEmojis(emoji)[0])
-                    if (dataUri) {
-                        elements += `<image href="${dataUri}" x="${emojiX}" y="${emojiY}" width="${emojiSize}" height="${emojiSize}"/>\n`
-                        emojiX += emojiSize * 1.05
-                    }
-                })
+        if (tokens.length === 1) {
+            // Kalau cuma 1 kata, normal rata kiri
+            const token = tokens[0]
+            const isEmoji = detectEmojis(token).length > 0
+            if (isEmoji) {
+                const dataUri = emojiMap.get(token.trim()) ?? emojiMap.get(detectEmojis(token)[0])
+                if (dataUri) elements += `<image href="${dataUri}" x="${x}" y="${y - emojiSize * 0.84}" width="${emojiSize}" height="${emojiSize}"/>\n`
             } else {
-                // B. KASUS BRAT/ANOMALI (Rata Kiri + Justify Paksa Kata + Kunci Emoji di Ujung Kanan Margin)
-                // Biar kata terakhir "sih" ketarik ke ujung kanan mepet emoji, kita WAJIB nyalakan textLength di baris ini!
-                const justifyAttr = justify ? `textLength="${justifyWidth - (emojisInLine.length * (emojiSize * 0.9))}" lengthAdjust="spacing"` : ''
-
-                elements += `
-                <text x="${x}" y="${y}"
-                    text-anchor="start"
-                    font-family="${fontFamily}"
-                    font-weight="${fontWeight}"
-                    font-size="${fontSize}px"
-                    fill="${fill}"
-                    letter-spacing="${letterSpacing}"
-                    ${justifyAttr}>${safeText}</text>\n`
-
-                // Kunci posisi koordinat X Emoji mutlak nempel di batas margin kanan (472px + offset x)
-                let emojiX = x + justifyWidth - (emojisInLine.length * emojiSize * 0.95)
-
-                emojisInLine.forEach(emoji => {
-                    const dataUri = emojiMap.get(emoji.trim()) ?? emojiMap.get(detectEmojis(emoji)[0])
-                    if (dataUri) {
-                        elements += `<image href="${dataUri}" x="${emojiX}" y="${emojiY}" width="${emojiSize}" height="${emojiSize}"/>\n`
-                        emojiX += emojiSize * 0.95
-                    }
-                })
+                elements += `<text x="${x}" y="${y}" text-anchor="start" font-family="${fontFamily}" font-weight="${fontWeight}" font-size="${fontSize}px" fill="${fill}" letter-spacing="${letterSpacing}">${this.#escapeXml(token)}</text>\n`
             }
+        } else {
+            // Kalau > 1 kata: Bikin Jurang Spasi!
+            // 1. Estimasi lebar masing-masing token
+            const tokenWidths = tokens.map(t => {
+                if (detectEmojis(t).length > 0) return emojiSize
+                // Ratio Arial Narrow = 0.44
+                return [...t].length * fontSize * 0.44
+            })
+
+            // 2. Kalkulasi Sisa Spasi Kosong
+            const totalContentWidth = tokenWidths.reduce((a, b) => a + b, 0)
+            let gap = (justifyWidth - totalContentWidth) / (tokens.length - 1)
+
+            // Pengaman kalau estimasi meluber kepanjangan
+            if (gap < 0) gap = fontSize * 0.15
+
+            // 3. Render satu per satu dengan plot koordinat mutlak!
+            let currentX = x
+            tokens.forEach((token, index) => {
+                const isEmoji = detectEmojis(token).length > 0
+                if (isEmoji) {
+                    const dataUri = emojiMap.get(token.trim()) ?? emojiMap.get(detectEmojis(token)[0])
+                    if (dataUri) elements += `<image href="${dataUri}" x="${currentX}" y="${y - emojiSize * 0.84}" width="${emojiSize}" height="${emojiSize}"/>\n`
+                } else {
+                    elements += `<text x="${currentX}" y="${y}" text-anchor="start" font-family="${fontFamily}" font-weight="${fontWeight}" font-size="${fontSize}px" fill="${fill}" letter-spacing="${letterSpacing}">${this.#escapeXml(token)}</text>\n`
+                }
+                // Lompat ke titik berikutnya sejauh lebar kata + spasi raksasa
+                currentX += tokenWidths[index] + gap
+            })
         }
 
         return elements
@@ -320,8 +300,6 @@ class MediaService {
             let svgContent = ''
             lines.forEach((line, i) => {
                 const y = startY + (i * lineSpacing)
-                const isLast = i === lines.length - 1
-
                 svgContent += this.#renderLine(line, y, fontSize, {
                     x: 25,
                     textAnchor: 'start',
@@ -329,10 +307,7 @@ class MediaService {
                     fontWeight: 'normal',
                     fill: '#000000',
                     emojiMap,
-                    justify: true, // Tetap jalankan perhitungan justify biner
-                    justifyWidth: 465, // Jarak rentang optimal margin kanan brat
-                    isLast,
-                    letterSpacing: '-2px'
+                    letterSpacing: '-2.5px'
                 })
             })
 
@@ -362,15 +337,12 @@ class MediaService {
             const bottomData = this.#processTextAdaptive(cleanBottom, true)
 
             const emojiMap = await prepareEmojiMap(cleanTop + ' ' + cleanBottom)
-
             let svgContent = ''
 
-            // 🌟 FIX TOTAL MEME STICKER: Kembalikan textAnchor ke 'middle' & matikan justify (justify: false)
             topData.lines.forEach((line, i) => {
                 const y = topData.startY + (i * topData.lineSpacing)
-                const isLast = i === topData.lines.length - 1
                 svgContent += this.#renderLine(line, y, topData.fontSize, {
-                    x: 256,  // Center Kanvas 512/2
+                    x: 256,
                     textAnchor: 'middle',
                     fontFamily: "Impact, 'Arial Narrow', sans-serif",
                     fontWeight: 'bold',
@@ -378,17 +350,14 @@ class MediaService {
                     stroke: 'black',
                     strokeWidth: topData.fontSize > 60 ? '8' : '5',
                     emojiMap,
-                    justify: false, // Matikan paksaan melar rata kanan-kiri
-                    isLast,
                     letterSpacing: '0px'
                 })
             })
 
             bottomData.lines.forEach((line, i) => {
                 const y = bottomData.startY + (i * bottomData.lineSpacing)
-                const isLast = i === bottomData.lines.length - 1
                 svgContent += this.#renderLine(line, y, bottomData.fontSize, {
-                    x: 256,  // Center Kanvas 512/2
+                    x: 256,
                     textAnchor: 'middle',
                     fontFamily: "Impact, 'Arial Narrow', sans-serif",
                     fontWeight: 'bold',
@@ -396,8 +365,6 @@ class MediaService {
                     stroke: 'black',
                     strokeWidth: bottomData.fontSize > 60 ? '8' : '5',
                     emojiMap,
-                    justify: false, // Matikan paksaan melar rata kanan-kiri
-                    isLast,
                     letterSpacing: '0px'
                 })
             })
