@@ -1,19 +1,20 @@
 {
+    "name": "wabot2.0",
+    "version": "2.0.0",
+    "description": "WhatsApp Bot Modular Automation based on Baileys",
+    "main": "start.js",
     "type": "module",
     "scripts": {
         "dev": "nodemon --watch src --ext js src/core/bot.js",
-        "start": "node src/core/bot.js",
+        "start": "node start.js",
+        "start:bot-direct": "node src/core/bot.js",
         "start:pm2": "pm2 start ecosystem.config.js",
         "lint": "eslint src/",
         "db:migrate": "node scripts/migrate.js",
         "push": "node deploy.js"
     },
-    "name": "wabot2.0",
-    "version": "1.0.0",
-    "description": "",
-    "main": "ecosystem.config.js",
     "keywords": [],
-    "author": "",
+    "author": "Rony Imanuel Sihombing",
     "license": "ISC",
     "dependencies": {
         "@hapi/boom": "^10.0.1",
