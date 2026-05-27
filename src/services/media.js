@@ -114,7 +114,7 @@ class MediaService {
     <cachedir>${cacheDir}</cachedir>
 </fontconfig>`
 
-            fs.writeFileSync(config, configFile, 'utf8')
+            fs.writeFileSync(configFile, config, 'utf8')
             process.env.FONTCONFIG_FILE = configFile
             console.log(`⚙️ [MediaService] Fontconfig ready → ${fontDir}`)
         } catch (e) {
