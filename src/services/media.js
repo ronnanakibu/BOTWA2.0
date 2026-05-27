@@ -64,52 +64,53 @@ class MediaService {
     }
 
     /**
-     * Generator Stiker Anomali Raksasa Padat Mepet Margin (Brat White Mode Style)
-     */
+         * Generator Stiker Brat/Anomali ULTRA JUSTIFY
+         * Memaksa teks rata kanan-kiri penuh memenuhi margin menggunakan foreignObject HTML.
+         */
     async toQuoteSticker(rawText) {
         try {
-            // Huruf kecil murni sesuai template asli
+            // Dipaksa huruf kecil murni khas brat generator
             const cleanText = rawText.trim().toLowerCase()
             const lines = this.#wrapText(cleanText, 11)
 
-            // 🌟 TWEAK 1: Dongkrak base fontSize jadi raksasa penuh memenuhi kanvas
+            // Ukuran font adaptif raksasa penuh memenuhi kanvas
             let fontSize = 105
             if (lines.length > 3) fontSize = 82
             if (lines.length > 5) fontSize = 64
             if (lines.length > 8) fontSize = 46
 
-            // Jarak antar baris dibuat super rapat khas kompresi Brat
-            const lineSpacing = fontSize * 1.02
+            // Gabungkan baris kata menjadi satu paragraf murni untuk diproses HTML justify
+            const safeParagraph = cleanText
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
 
-            // 🌟 TWEAK 2: Angkat posisi startY ke atas agar mepet margin atas
-            let startY = 90
+            // Hitung estimasi tinggi kontainer HTML agar pas di kanvas
+            const boxHeight = 440
 
-            let svgTextElements = ''
-            lines.forEach((line, i) => {
-                const y = startY + (i * lineSpacing)
-                const safeLine = line
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')
-                    .replace(/>/g, '&gt;')
-                    .replace(/"/g, '&quot;')
-
-                // 🌟 TWEAK 3: Atur x="25" biar mepet mentok ke kiri & perlebar letter-spacing minus (-3px) biar padat dempet
-                svgTextElements += `
-                <text x="25" y="${y}" 
-                    font-family="'Arial Narrow', Arial, sans-serif" 
-                    font-weight="normal" 
-                    font-size="${fontSize}px" 
-                    fill="#000000"
-                    letter-spacing="-3px">
-                    ${safeLine}
-                </text>\n`
-            })
-
+            // 🌟 SUNTIKAN FOREIGN_OBJECT: Menggunakan div HTML untuk text-align: justify murni
             const svgOverlay = Buffer.from(`
             <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
-                ${svgTextElements}
+                <foreignObject x="30" y="55" width="452" height="${boxHeight}">
+                    <div xmlns="http://www.w3.org/1999/xhtml" style="
+                        font-family: 'Arial Narrow', Arial, sans-serif;
+                        font-weight: normal;
+                        font-size: ${fontSize}px;
+                        color: #000000;
+                        text-align: justify;
+                        line-height: 1.05;
+                        letter-spacing: -2px;
+                        margin: 0;
+                        padding: 0;
+                        word-wrap: break-word;
+                    ">
+                        ${safeParagraph}
+                    </div>
+                </foreignObject>
             </svg>`)
 
+            // Latar belakang PUTIH SOLID murni sesuai screenshot brat web generator
             return await sharp({
                 create: {
                     width: 512,
@@ -123,8 +124,8 @@ class MediaService {
                 .toBuffer()
 
         } catch (err) {
-            logger.error('❌ Error inside MediaService.toQuoteSticker:', err.message)
-            throw new Error('Gagal meracik stiker teks anomali raksasa.')
+            logger.error('❌ Error inside MediaService.toQuoteSticker (Justify):', err.message)
+            throw new Error('Gagal meracik stiker brat justify.')
         }
     }
 
