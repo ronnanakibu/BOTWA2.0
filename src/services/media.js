@@ -64,12 +64,12 @@ class MediaService {
     }
 
     /**
-         * Generator Stiker Brat/Anomali ULTRA JUSTIFY
-         * Memaksa teks rata kanan-kiri penuh memenuhi margin menggunakan foreignObject HTML.
+         * Generator Stiker Brat/Anomali NATIVE JUSTIFY (Anti-Blank Putih)
+         * Memaksa teks rata kanan-kiri menggunakan atribut textLength bawaan SVG murni.
          */
     async toQuoteSticker(rawText) {
         try {
-            // Dipaksa huruf kecil murni khas brat generator
+            // Huruf kecil murni khas brat generator
             const cleanText = rawText.trim().toLowerCase()
             const lines = this.#wrapText(cleanText, 11)
 
@@ -79,38 +79,44 @@ class MediaService {
             if (lines.length > 5) fontSize = 64
             if (lines.length > 8) fontSize = 46
 
-            // Gabungkan baris kata menjadi satu paragraf murni untuk diproses HTML justify
-            const safeParagraph = cleanText
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
+            const lineSpacing = fontSize * 1.05
+            let startY = 90
 
-            // Hitung estimasi tinggi kontainer HTML agar pas di kanvas
-            const boxHeight = 440
+            let svgTextElements = ''
+            lines.forEach((line, i) => {
+                const y = startY + (i * lineSpacing)
+                const safeLine = line
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
 
-            // 🌟 SUNTIKAN FOREIGN_OBJECT: Menggunakan div HTML untuk text-align: justify murni
+                // 🌟 KUNCI JUSTIFY ANTI-CRASH: 
+                // Jika bukan baris terakhir, paksa merenggang memenuhi lebar 455px menggunakan textLength.
+                // Jika baris terakhir, biarkan rata kiri normal (sesuai kaidah paragraf justify asli).
+                const isLastLine = i === lines.length - 1
+                const justifyAttr = (!isLastLine && lines.length > 1)
+                    ? `textLength="455" lengthAdjust="spacing"`
+                    : ''
+
+                svgTextElements += `
+                <text x="25" y="${y}" 
+                    font-family="'Arial Narrow', Arial, sans-serif" 
+                    font-weight="normal" 
+                    font-size="${fontSize}px" 
+                    fill="#000000"
+                    letter-spacing="-2px"
+                    ${justifyAttr}>
+                    ${safeLine}
+                </text>\n`
+            })
+
+            // Menggunakan struktur SVG murni 100% tanpa foreignObject HTML
             const svgOverlay = Buffer.from(`
             <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
-                <foreignObject x="30" y="55" width="452" height="${boxHeight}">
-                    <div xmlns="http://www.w3.org/1999/xhtml" style="
-                        font-family: 'Arial Narrow', Arial, sans-serif;
-                        font-weight: normal;
-                        font-size: ${fontSize}px;
-                        color: #000000;
-                        text-align: justify;
-                        line-height: 1.05;
-                        letter-spacing: -2px;
-                        margin: 0;
-                        padding: 0;
-                        word-wrap: break-word;
-                    ">
-                        ${safeParagraph}
-                    </div>
-                </foreignObject>
+                ${svgTextElements}
             </svg>`)
 
-            // Latar belakang PUTIH SOLID murni sesuai screenshot brat web generator
             return await sharp({
                 create: {
                     width: 512,
@@ -124,8 +130,8 @@ class MediaService {
                 .toBuffer()
 
         } catch (err) {
-            logger.error('❌ Error inside MediaService.toQuoteSticker (Justify):', err.message)
-            throw new Error('Gagal meracik stiker brat justify.')
+            logger.error('❌ Error inside MediaService.toQuoteSticker (Native Justify):', err.message)
+            throw new Error('Gagal meracik stiker brat native justify.')
         }
     }
 
