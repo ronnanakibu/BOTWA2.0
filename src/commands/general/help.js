@@ -45,7 +45,7 @@ export default {
         text += `Prefix: *${prefix}* | Total: *${Object.values(categories).flat().length}* commands\n`
         text += `Ketik *${prefix}help [command]* untuk detail\n\n`
 
-        const categoryEmoji = { general: '🔧', ai: '🤖', media: '🎨', owner: '👑', misc: '📦' }
+        const categoryEmoji = { general: '🔧', ai: '🤖', media: '🎨', owner: '👑', group: '👥', misc: '📦' }
 
         for (const [cat, cmds] of Object.entries(categories)) {
             const emoji = categoryEmoji[cat] ?? '📦'
