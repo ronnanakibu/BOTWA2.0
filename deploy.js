@@ -47,75 +47,117 @@ async function getAllFiles(dir, fileList = []) {
 }
 
 async function main() {
-    // Cek apakah user menambahkan flag --all di terminal
-    const isFullSync = process.argv.includes('--all');
-    let filesToUpload = [];
+    // ─────────────────────────────────────────────
+    // 🌟 PARSING FLAGS & CONDITIONAL LOGIC
+    // ─────────────────────────────────────────────
+    const args = process.argv.slice(2);
+    const isFullSync = args.includes('--all');
+    const hasGitFlag = args.includes('--git');
+    const hasSftpFlag = args.includes('--sftp');
 
-    if (isFullSync) {
-        console.log('📦 [Deploy] Mode: FULL SYNC (--all) aktif. Memindai seluruh file proyek...');
-        filesToUpload = await getAllFiles('.');
-    } else {
-        console.log('💥 [Git] Mode: DELTA SYNC. Memeriksa status repositori...');
+    // Default: Jalan dua-duanya (true)
+    let runGit = true;
+    let runSftp = true;
+
+    // Jika salah satu atau kedua flag target di-spesifikasikan, gunakan seleksi flag
+    if (hasGitFlag || hasSftpFlag) {
+        runGit = hasGitFlag;
+        runSftp = hasSftpFlag;
+    }
+
+    // Cari commit message: ambil argumen pertama yang bukan berawalan '-' (bukan flag)
+    const commitMessage = args.find(arg => !arg.startsWith('-'))
+        || `deploy: sync auto ${new Date().toISOString().replace(/T/, ' ').replace(/\..+/, '')}`;
+
+    console.log(`\n🔥 RonnBot Pipeline Active Target → Git: ${runGit ? '✅' : '❌'} | SFTP: ${runSftp ? '✅' : '❌'}`);
+
+    // ─────────────────────────────────────────────
+    // 📦 TARGET 1: GITHUB VERSION CONTROL SYSTEM
+    // ─────────────────────────────────────────────
+    if (runGit) {
+        console.log('\n💥 [Git] Mode: DELTA COMMIT. Memeriksa status repositori...');
         const status = runGitCommand('git status --porcelain');
 
         if (!status) {
-            console.log('🔄 [Git] Tree clean. Tidak ada perubahan baru. Memeriksa delta commit terakhir...');
+            console.log('🔄 [Git] Tree clean. Tidak ada perubahan baru untuk di-commit lokal.');
         } else {
-            const commitMessage = process.argv.find(arg => !arg.startsWith('-') && arg !== 'deploy.js')
-                || `deploy: sync auto ${new Date().toISOString().replace(/T/, ' ').replace(/\..+/, '')}`;
-
             console.log('📦 [Git] Menyetor dan mengunci commit perubahan...');
             runGitCommand('git add .');
             runGitCommand(`git commit -m "${commitMessage}"`);
-            console.log(`✅ [Git] Berhasil commit: "${commitMessage}"`);
+            console.log(`✅ [Git] Berhasil commit lokal: "${commitMessage}"`);
         }
 
-        console.log('🔍 [Git] Mengurai berkas yang berubah dari commit terbaru...');
-        const changedFilesRaw = runGitCommand('git diff-tree -r --no-commit-id --name-only HEAD');
-
-        if (changedFilesRaw) {
-            filesToUpload = changedFilesRaw.split('\n').filter(file => {
-                if (!file) return false;
-                const firstPart = file.split(/[/\\]/)[0];
-                return !ignoreList.includes(firstPart) && fs.existsSync(file);
-            });
+        console.log('📦 [GitHub] Memulai sinkronisasi repository ke GitHub remote...');
+        try {
+            console.log('🚀 [GitHub] Meluncurkan perintah git push...');
+            execSync('git push', { stdio: 'inherit' });
+            console.log('✅ [GitHub] Sempurna! Kode terbaru berhasil dicadangkan ke GitHub.');
+        } catch (gitErr) {
+            console.error('⚠️ [GitHub] Peringatan: Gagal melakukan push ke GitHub. Tetap melanjutkan pipeline...');
         }
+    } else {
+        console.log('\n⏩ [GitHub] Dilewati (Flag --git tidak dipanggil).');
     }
 
-    if (filesToUpload.length === 0) {
-        console.log('👍 [Deploy] Tidak ada file yang perlu diunggah. Selesai.');
-        return;
-    }
+    // ─────────────────────────────────────────────
+    // 🚀 TARGET 2: SFTP PTERODACTYL SERVER DEPLOYMENT
+    // ─────────────────────────────────────────────
+    if (runSftp) {
+        let filesToUpload = [];
 
-    const sftp = new Client();
-    try {
-        console.log(`\n⏳ Menyambungkan ke PTERODACTYL SFTP (Mengirim ${filesToUpload.length} file)...`);
-        await sftp.connect(config);
-        console.log('✅ Terhubung! Memulai proses sinkronisasi struktur berkas...');
+        if (isFullSync) {
+            console.log('\n📦 [SFTP] Mode: FULL SYNC (--all) aktif. Memindai seluruh file proyek...');
+            filesToUpload = await getAllFiles('.');
+        } else {
+            console.log('\n🔍 [SFTP] Mode: DELTA SYNC. Mengurai berkas yang berubah dari commit terbaru...');
+            const changedFilesRaw = runGitCommand('git diff-tree -r --no-commit-id --name-only HEAD');
 
-        for (const localFile of filesToUpload) {
-            // Ubah path Windows (\) ke Linux (/)
-            const remoteFile = '/' + localFile.replace(/\\/g, '/');
-            const remoteDir = path.dirname(remoteFile).replace(/\\/g, '/');
+            if (changedFilesRaw) {
+                filesToUpload = changedFilesRaw.split('\n').filter(file => {
+                    if (!file) return false;
+                    const firstPart = file.split(/[/\\]/)[0];
+                    return !ignoreList.includes(firstPart) && fs.existsSync(file);
+                });
+            }
+        }
 
-            // Otomatis bikin folder di server jika belum ada
-            if (remoteDir !== '/') {
-                const exists = await sftp.exists(remoteDir);
-                if (!exists) {
-                    await sftp.mkdir(remoteDir, true);
+        if (filesToUpload.length === 0) {
+            console.log('👍 [SFTP] Tidak ada file baru/delta yang perlu diunggah. Proses selesai.');
+            return;
+        }
+
+        const sftp = new Client();
+        try {
+            console.log(`\n⏳ Menyambungkan ke PTERODACTYL SFTP (Mengirim ${filesToUpload.length} file)...`);
+            await sftp.connect(config);
+            console.log('✅ Terhubung! Memulai proses sinkronisasi struktur berkas...');
+
+            for (const localFile of filesToUpload) {
+                const remoteFile = '/' + localFile.replace(/\\/g, '/');
+                const remoteDir = path.dirname(remoteFile).replace(/\\/g, '/');
+
+                if (remoteDir !== '/') {
+                    const exists = await sftp.exists(remoteDir);
+                    if (!exists) {
+                        await sftp.mkdir(remoteDir, true);
+                    }
                 }
+
+                console.log(`🚀 [Pushing] ${localFile} -> ${remoteFile}`);
+                await sftp.put(localFile, remoteFile);
             }
 
-            console.log(`🚀 [Pushing] ${localFile} -> ${remoteFile}`);
-            await sftp.put(localFile, remoteFile);
+            console.log('\n🎉 [SFTP] Hore! Semua file sukses disinkronisasikan seutuhnya ke Pterodactyl.');
+        } catch (err) {
+            console.error('\n❌ [SFTP] Proses upload gagal:', err.message);
+        } finally {
+            await sftp.end();
         }
-
-        console.log('\n🎉 [Deploy] Hore! Semua file sukses disinkronisasikan seutuhnya.');
-    } catch (err) {
-        console.error('\n❌ [Deploy] Proses gagal:', err.message);
-    } finally {
-        await sftp.end();
+    } else {
+        console.log('⏩ [SFTP] Dilewati (Flag --sftp tidak dipanggil).');
     }
+
+    console.log('\n🎉 [DONE] Tugas pipeline selesai dieksekusi, cuy!');
 }
 
 main();
