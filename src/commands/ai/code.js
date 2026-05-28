@@ -54,7 +54,7 @@ export default {
         await react('🔍')
 
         try {
-            const result = await aiService.debugCode(code, language)
+            const result = await aiService.debugCode(code, language, ctx.chatId)
             await reply(result.text)
             await react('✅')
         } catch (err) {

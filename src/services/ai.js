@@ -229,7 +229,8 @@ async function generateImage(prompt) {
 // CODE DEBUGGER
 // ─────────────────────────────────────────────
 
-async function debugCode(code, language = 'auto') {
+async function debugCode(code, language = 'auto', chatId = null) {
+    const isolatedId = chatId ? `__debug__${chatId}` : `__debug__`
     const prompt = `Kamu adalah senior software engineer.
 Analisa kode berikut dan berikan:
 1. **Bug/Error** yang ditemukan (kalau ada)
@@ -245,7 +246,7 @@ ${code}
 
 Jawab dalam bahasa Indonesia, format rapi dengan markdown.`
 
-    return groqChat('__debug__', prompt)
+    return groqChat(isolatedId, prompt)
 }
 
 // ─────────────────────────────────────────────
@@ -307,7 +308,7 @@ export const aiService = {
     chat,
     analyzeImage,
     generateImage,
-    debugCode,
+    debugCode,  // sudah handle chatId
     getDailyFact,
     groqChat,
     geminiChat,

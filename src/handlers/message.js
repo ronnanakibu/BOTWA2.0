@@ -13,6 +13,7 @@ export async function handleIncomingMessage(sock, { messages }) {
 
         const from = msg.key.remoteJid
         const isGroup = from.endsWith('@g.us')
+        const isDM = !isGroup && from.endsWith('@s.whatsapp.net')
         const sender = isGroup ? msg.key.participant : from
 
         // Unwrap ephemeral / viewonce / documentWithCaption
@@ -42,8 +43,11 @@ export async function handleIncomingMessage(sock, { messages }) {
         // CONTEXT BUILDER
         // ─────────────────────────────────────────────
 
-        // Bot JID untuk deteksi mention di grup
-        const botJid = sock.user?.id?.replace(/:\d+/, '') + '@s.whatsapp.net'
+        // Bot JID — normalisasi format Baileys
+        const rawBotId = sock.user?.id ?? ''
+        const botJid = rawBotId.includes(':')
+            ? rawBotId.replace(/:\d+@/, '@')
+            : rawBotId
 
         // Quoted message — untuk seamless AI & command reply
         const quotedMsgId = messageContent?.extendedTextMessage?.contextInfo?.stanzaId ?? null
@@ -51,28 +55,34 @@ export async function handleIncomingMessage(sock, { messages }) {
 
         // Mention detection — @bot di grup
         const mentionedJids = messageContent?.extendedTextMessage?.contextInfo?.mentionedJid ?? []
-        const isMentioned = isGroup && mentionedJids.includes(botJid)
+        const isMentionedInGroup = isGroup && mentionedJids.includes(botJid)
+
+        // 🆕 DM trigger — pesan langsung ke bot tanpa prefix = AI
+        // Tapi jangan trigger kalau itu command (ada prefix)
+        const prefix = process.env.BOT_PREFIX || '!'
+        const isCommand = body.startsWith(prefix)
+        const isDMTrigger = isDM && !isCommand && body.trim().length > 0
 
         // Strip mention dari body untuk prompt AI yang bersih
-        // "@628xxx hei bot siapa kamu?" → "hei bot siapa kamu?"
         const bodyWithoutMention = body
             .replace(/@\d+/g, '')
             .replace(/\s+/g, ' ')
             .trim()
 
-        // Helper: reply + auto-track seamless
+        // ─────────────────────────────────────────────
+        // HELPERS
+        // ─────────────────────────────────────────────
+
         const reply = async (text, options = {}) => {
             const sent = await sock.sendMessage(from, { text, ...options }, { quoted: msg })
             if (sent?.key?.id) seamlessTracker.track(sent.key.id)
             return sent
         }
 
-        // Helper: react emoji
         const react = async (emoji) => {
             await sock.sendMessage(from, { react: { text: emoji, key: msg.key } })
         }
 
-        // Helper: download media
         const downloadMedia = async (targetMsg = msg) => {
             try {
                 return await downloadMediaMessage(targetMsg, 'buffer', {})
@@ -90,12 +100,14 @@ export async function handleIncomingMessage(sock, { messages }) {
             chatId: from,
             sender,
             isGroup,
+            isDM,
             body,
             bodyWithoutMention,
             type,
             quotedMsgId,
             isReplyToBot,
-            isMentioned,
+            isMentioned: isMentionedInGroup,
+            isDMTrigger,
             reply,
             react,
             downloadMedia,
@@ -104,13 +116,11 @@ export async function handleIncomingMessage(sock, { messages }) {
             }
         }
 
-        const prefix = process.env.BOT_PREFIX || '!'
-
         // ─────────────────────────────────────────────
         // ROUTE 1: COMMAND (prefix)
         // ─────────────────────────────────────────────
 
-        if (body.startsWith(prefix)) {
+        if (isCommand) {
             const rawArgs = body.slice(prefix.length).trim().split(/ +/)
             const commandName = rawArgs.shift().toLowerCase()
 
@@ -132,7 +142,6 @@ export async function handleIncomingMessage(sock, { messages }) {
 
         // ─────────────────────────────────────────────
         // ROUTE 2: SEAMLESS AI — reply ke pesan bot
-        // User reply ke pesan bot tanpa prefix = lanjut konteks AI
         // ─────────────────────────────────────────────
 
         if (isReplyToBot && body.trim()) {
@@ -153,11 +162,10 @@ export async function handleIncomingMessage(sock, { messages }) {
         }
 
         // ─────────────────────────────────────────────
-        // ROUTE 3: MENTION DI GRUP → trigger AI
-        // @RonnBot [pertanyaan] tanpa prefix
+        // ROUTE 3: MENTION DI GRUP — @bot [pertanyaan]
         // ─────────────────────────────────────────────
 
-        if (isMentioned && bodyWithoutMention) {
+        if (isMentionedInGroup && bodyWithoutMention) {
             if (!memoryService.isAiEnabled(from)) return
             console.log(`🤖 [Mention] "${bodyWithoutMention.slice(0, 60)}"`)
 
@@ -170,6 +178,28 @@ export async function handleIncomingMessage(sock, { messages }) {
             } catch (err) {
                 await react('❌')
                 logger.error('[Mention] AI error:', err.message)
+            }
+            return
+        }
+
+        // ─────────────────────────────────────────────
+        // ROUTE 4: DM TRIGGER — pesan langsung ke bot
+        // User chat ke bot tanpa prefix = langsung AI
+        // ─────────────────────────────────────────────
+
+        if (isDMTrigger) {
+            if (!memoryService.isAiEnabled(from)) return
+            console.log(`🤖 [DM] "${body.slice(0, 60)}"`)
+
+            await react('🤔')
+            try {
+                const result = await aiService.chat(from, body)
+                const sent = await reply(result.text)
+                if (sent?.key?.id) seamlessTracker.track(sent.key.id)
+                await react('✅')
+            } catch (err) {
+                await react('❌')
+                logger.error('[DM] AI error:', err.message)
             }
             return
         }
