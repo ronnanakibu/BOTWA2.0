@@ -1,6 +1,7 @@
 // src/core/loader.js
 import { readdirSync, statSync } from 'fs'
 import path from 'path'
+import { pathToFileURL } from 'url'
 import { logger } from '../utils/logger.js'
 
 export const commands = new Map()
@@ -22,14 +23,20 @@ export async function loadCommands(dir = './src/commands') {
         const isDir = statSync(fullPath).isDirectory()
 
         if (isDir) {
-            await loadCommands(fullPath)  // rekursif sub-folder
+            await loadCommands(fullPath)
             continue
         }
 
         if (!entry.endsWith('.js')) continue
 
         try {
-            const mod = await import(`../../${fullPath}`)
+            // ✅ FIX: pakai path absolute + file:// URL
+            // Sebelumnya: import(`../../${fullPath}`) → path relatif kacau
+            // Sekarang: import(fileURL) → selalu resolve dari root project
+            const absolutePath = path.resolve(fullPath)
+            const fileURL = pathToFileURL(absolutePath).href
+
+            const mod = await import(fileURL)
             const cmd = mod.default
 
             if (!cmd) {
@@ -43,17 +50,17 @@ export async function loadCommands(dir = './src/commands') {
 
             commands.set(cmd.name, cmd)
 
-            // Register aliases
             if (cmd.aliases) {
                 for (const alias of cmd.aliases) {
                     commands.set(alias, cmd)
                 }
             }
 
-            console.log(`✅ [Debug Loader] SUKSES memuat command: ${cmd.name} (Aliases: ${cmd.aliases || 'tidak ada'})`)
+            console.log(`✅ [Debug Loader] SUKSES memuat command: ${cmd.name} (Aliases: ${cmd.aliases?.join(', ') || 'tidak ada'})`)
             logger.info(`Loaded command: ${cmd.name} [${cmd.category}]`)
+
         } catch (importErr) {
-            console.error(`❌ [Debug Loader] Gagal import file ${fullPath}:`, importErr.message)
+            console.error(`❌ [Debug Loader] Gagal import ${fullPath}:`, importErr.message)
         }
     }
 }
