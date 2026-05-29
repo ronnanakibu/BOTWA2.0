@@ -1,189 +1,72 @@
 // src/handlers/message.js
-// FIXED v2: prefix multi-support, mention detection robust, download media quoted fix
-
 import { commands } from '../core/loader.js'
-import { logger } from '../utils/logger.js'
+import { logger, botLogger } from '../utils/logger.js'
 import { aiService } from '../services/ai.js'
 import { memoryService } from '../services/memory.js'
 import { seamlessTracker } from '../services/seamless.js'
+import { checkPermission } from '../middleware/permission.js'
 import { downloadMediaMessage } from '@whiskeysockets/baileys'
-
-// ─────────────────────────────────────────────
-// JID UTILITIES
-// ─────────────────────────────────────────────
-
-function normalizeJid(jid = '') {
-    if (!jid) return ''
-    return jid.replace(/:\d+@/, '@').toLowerCase().trim()
-}
-
-function extractPhoneNumber(jid = '') {
-    return normalizeJid(jid)
-        .replace('@s.whatsapp.net', '')
-        .replace('@g.us', '')
-}
-
-// ─────────────────────────────────────────────
-// MENTION DETECTION
-// 3-layer: exact match → phone prefix → body scan
-// ─────────────────────────────────────────────
-
-function isBotMentioned(mentionedJids = [], botJid = '', messageBody = '') {
-    if (!botJid) return false
-
-    const normalizedBot = normalizeJid(botJid)
-    const botPhone = extractPhoneNumber(botJid)
-
-    // Layer 1: exact match setelah normalize
-    if (mentionedJids.map(normalizeJid).includes(normalizedBot)) return true
-
-    // Layer 2: phone prefix match
-    if (botPhone && mentionedJids.map(normalizeJid).some(j => j.startsWith(botPhone + '@'))) return true
-
-    // Layer 3: body text scan (WhatsApp kadang tidak sertakan mentionedJid)
-    if (botPhone && messageBody.includes('@' + botPhone)) return true
-
-    return false
-}
-
-// Cek semua kemungkinan lokasi mentionedJid di message object Baileys
-function extractMentionedJids(msg, messageContent) {
-    const candidates = [
-        messageContent?.extendedTextMessage?.contextInfo?.mentionedJid,
-        messageContent?.contextInfo?.mentionedJid,
-        messageContent?.imageMessage?.contextInfo?.mentionedJid,
-        messageContent?.videoMessage?.contextInfo?.mentionedJid,
-        msg.message?.extendedTextMessage?.contextInfo?.mentionedJid,
-        msg.message?.ephemeralMessage?.message?.extendedTextMessage?.contextInfo?.mentionedJid,
-        msg.message?.viewOnceMessage?.message?.extendedTextMessage?.contextInfo?.mentionedJid,
-    ]
-    for (const c of candidates) {
-        if (Array.isArray(c) && c.length > 0) return c
-    }
-    return []
-}
-
-// ─────────────────────────────────────────────
-// PREFIX DETECTION
-// Support: ! / . (configurable via env BOT_PREFIX)
-// FIX: user pakai /groupinfo → harus terdeteksi sebagai command
-// ─────────────────────────────────────────────
-
-// Semua prefix yang valid — dari env + default fallback
-function getValidPrefixes() {
-    const envPrefix = process.env.BOT_PREFIX ?? '!'
-    // Selalu include prefix dari env, tambah '/' sebagai universal prefix
-    const set = new Set([envPrefix, '/'])
-    return [...set]
-}
-
-function detectCommand(body = '') {
-    const prefixes = getValidPrefixes()
-    for (const prefix of prefixes) {
-        if (body.startsWith(prefix)) {
-            const withoutPrefix = body.slice(prefix.length).trim()
-            if (withoutPrefix.length === 0) continue // prefix doang tanpa command
-            const parts = withoutPrefix.split(/ +/)
-            const commandName = parts.shift().toLowerCase()
-            const args = parts
-            return { isCommand: true, prefix, commandName, args }
-        }
-    }
-    return { isCommand: false, prefix: null, commandName: null, args: [] }
-}
-
-// ─────────────────────────────────────────────
-// MAIN HANDLER
-// ─────────────────────────────────────────────
 
 export async function handleIncomingMessage(sock, { messages }) {
     try {
         const msg = messages[0]
-        if (!msg?.message) return
+        if (!msg.message) return
 
-        // ── 1. BOT JID ────────────────────────────────
-        const rawBotId = sock.user?.id
-            ?? (process.env.BOT_NUMBER?.replace(/[^0-9]/g, '') + '@s.whatsapp.net')
-            ?? ''
-        const botJid = normalizeJid(rawBotId)
-
-        // ── 2. BASIC INFO ─────────────────────────────
         const from = msg.key.remoteJid
-        const isGroup = from?.endsWith('@g.us') ?? false
-        const isDM = !isGroup && from?.endsWith('@s.whatsapp.net')
-        const sender = isGroup ? (msg.key.participant ?? '') : from
+        const isGroup = from.endsWith('@g.us')
+        const isDM = !isGroup && from.endsWith('@s.whatsapp.net')
+        const sender = isGroup ? msg.key.participant : from
 
-        if (!from) return
-
-        // ── 3. UNWRAP LAYERS ──────────────────────────
-        const WRAPPERS = [
-            'ephemeralMessage',
-            'viewOnceMessage',
-            'viewOnceMessageV2',
-            'viewOnceMessageV2Extension',
-            'documentWithCaptionMessage',
-            'interactiveResponseMessage',
-        ]
-
+        // Unwrap ephemeral / viewonce / documentWithCaption
         let messageContent = msg.message
-        let wrapDepth = 0
-        while (wrapDepth < 3) {
-            const baseType = Object.keys(messageContent ?? {})[0]
-            if (!baseType || !WRAPPERS.includes(baseType)) break
-            messageContent = messageContent[baseType]?.message ?? messageContent
-            wrapDepth++
+        const wrapperTypes = ['ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'documentWithCaptionMessage']
+        const baseType = Object.keys(messageContent)[0]
+        if (wrapperTypes.includes(baseType)) {
+            messageContent = messageContent[baseType].message
         }
         if (!messageContent) return
 
         const type = Object.keys(messageContent)[0]
-
-        // ── 4. EXTRACT BODY ───────────────────────────
         const body =
             messageContent?.conversation
-            ?? messageContent?.extendedTextMessage?.text
-            ?? messageContent?.imageMessage?.caption
-            ?? messageContent?.videoMessage?.caption
-            ?? messageContent?.documentMessage?.caption
-            ?? messageContent?.buttonsResponseMessage?.selectedDisplayText
-            ?? messageContent?.listResponseMessage?.title
-            ?? ''
+            || messageContent?.extendedTextMessage?.text
+            || messageContent?.imageMessage?.caption
+            || messageContent?.videoMessage?.caption
+            || ''
 
-        // ── 5. FILTER ─────────────────────────────────
+        // Filter: abaikan pesan dari bot sendiri
         if (msg.key.fromMe) return
-        // Allow media messages even without body (untuk !lihat dll)
-        if (!body && !['imageMessage', 'videoMessage', 'audioMessage', 'stickerMessage'].includes(type)) return
 
-        // ── 6. COMMAND DETECTION ──────────────────────
-        // FIX: deteksi prefix termasuk '/'
-        const cmdResult = detectCommand(body)
+        // Log setiap incoming message
+        botLogger.message({ sender, type, body, isGroup, chatId: from })
 
-        // ── 7. MENTION DETECTION ──────────────────────
-        const mentionedJids = extractMentionedJids(msg, messageContent)
-        const isMentionedInGroup = isGroup && isBotMentioned(mentionedJids, botJid, body)
+        // ─────────────────────────────────────────────
+        // CONTEXT BUILDER
+        // ─────────────────────────────────────────────
 
-        // Debug log untuk tracing mention issue
-        if (isGroup) {
-            logger.debug(`[MSG] from=${extractPhoneNumber(sender)} body="${body.slice(0, 40)}" isCmd=${cmdResult.isCommand} isMention=${isMentionedInGroup} mentionedJids=${JSON.stringify(mentionedJids)} botJid=${botJid}`)
-        }
+        const rawBotId = sock.user?.id ?? ''
+        const botJid = rawBotId.includes(':')
+            ? rawBotId.replace(/:\d+@/, '@')
+            : rawBotId
 
-        // ── 8. SEAMLESS REPLY ─────────────────────────
-        const quotedMsgId =
-            messageContent?.extendedTextMessage?.contextInfo?.stanzaId
-            ?? msg.message?.extendedTextMessage?.contextInfo?.stanzaId
-            ?? null
+        const quotedMsgId = messageContent?.extendedTextMessage?.contextInfo?.stanzaId ?? null
         const isReplyToBot = seamlessTracker.isReplyToBot(quotedMsgId)
 
-        // ── 9. DM TRIGGER ─────────────────────────────
-        // Chat langsung ke bot tanpa prefix = AI
-        const isDMTrigger = isDM && !cmdResult.isCommand && body.trim().length > 0
+        const mentionedJids = messageContent?.extendedTextMessage?.contextInfo?.mentionedJid ?? []
+        const isMentionedInGroup = isGroup && mentionedJids.includes(botJid)
 
-        // Strip mention dari body untuk AI prompt
+        const prefix = process.env.BOT_PREFIX || '!'
+        const isCommand = body.startsWith(prefix)
+        const isDMTrigger = isDM && !isCommand && body.trim().length > 0
+
         const bodyWithoutMention = body
-            .replace(/@\d{5,20}/g, '')
-            .replace(/\s{2,}/g, ' ')
+            .replace(/@\d+/g, '')
+            .replace(/\s+/g, ' ')
             .trim()
 
-        // ── 10. HELPERS ───────────────────────────────
+        // ─────────────────────────────────────────────
+        // HELPERS
+        // ─────────────────────────────────────────────
 
         const reply = async (text, options = {}) => {
             const sent = await sock.sendMessage(from, { text, ...options }, { quoted: msg })
@@ -192,21 +75,15 @@ export async function handleIncomingMessage(sock, { messages }) {
         }
 
         const react = async (emoji) => {
-            try {
-                await sock.sendMessage(from, { react: { text: emoji, key: msg.key } })
-            } catch (_) { /* non-critical */ }
+            await sock.sendMessage(from, { react: { text: emoji, key: msg.key } })
         }
 
         const downloadMedia = async (targetMsg = msg) => {
             try {
-                return await downloadMediaMessage(
-                    targetMsg,
-                    'buffer',
-                    {},
-                    { logger: console, reuploadRequest: sock.updateMediaMessage }
-                )
+                botLogger.debug('handler', 'Downloading media...')
+                return await downloadMediaMessage(targetMsg, 'buffer', {})
             } catch (err) {
-                logger.error('[Handler] Download media failed:', err.message)
+                botLogger.err('handler', err, 'downloadMedia')
                 return null
             }
         }
@@ -235,102 +112,123 @@ export async function handleIncomingMessage(sock, { messages }) {
             }
         }
 
-        // ══════════════════════════════════════════════
-        // ROUTING
-        // ══════════════════════════════════════════════
+        // ─────────────────────────────────────────────
+        // ROUTE 1: COMMAND (prefix)
+        // ─────────────────────────────────────────────
 
-        // ── ROUTE 1: COMMAND ──────────────────────────
-        if (cmdResult.isCommand) {
-            ctx.args = cmdResult.args
-            ctx.commandName = cmdResult.commandName
-            ctx.prefix = cmdResult.prefix
+        if (isCommand) {
+            const rawArgs = body.slice(prefix.length).trim().split(/ +/)
+            const commandName = rawArgs.shift().toLowerCase()
 
-            logger.debug(`[Router] cmd="${cmdResult.commandName}" prefix="${cmdResult.prefix}" from=${extractPhoneNumber(sender)}`)
+            ctx.args = rawArgs
+            ctx.commandName = commandName
 
-            const command = commands.get(cmdResult.commandName)
-            if (!command) return // unknown command, silent ignore
+            const command = commands.get(commandName)
 
-            try {
-                await command.execute(ctx)
-            } catch (cmdErr) {
-                logger.error(`[Command:${cmdResult.commandName}] ${cmdErr.message}`, cmdErr)
-                await reply(`❌ Error di command *${cmdResult.commandName}*:\n${cmdErr.message}`)
-            }
-            return
-        }
-
-        // ── ROUTE 2: MENTION DI GRUP (Meta AI style) ─
-        if (isMentionedInGroup) {
-            if (!memoryService.isAiEnabled(from)) return
-
-            if (!bodyWithoutMention) {
-                // Di-tag tapi tidak ada pertanyaan
-                await reply(
-                    `👋 Halo! Mau nanya apa?\n` +
-                    `_Contoh: @${extractPhoneNumber(rawBotId)} siapa presiden Indonesia?_`
-                )
+            if (!command) {
+                botLogger.warn('handler', `Unknown command: "${commandName}" from ${sender}`)
                 return
             }
 
-            logger.info(`[Mention] "${bodyWithoutMention.slice(0, 60)}" from=${extractPhoneNumber(sender)}`)
-            await react('🤔')
+            // ── PERMISSION CHECK ──
+            const permResult = await checkPermission(ctx, command)
+            if (!permResult.allowed) {
+                await react('🚫')
+                await reply(permResult.reason ?? '🚫 Akses ditolak.')
+                botLogger.warn('handler', `Permission denied: ${commandName} for ${sender}`)
+                return
+            }
+
+            // ── EXECUTE ──
+            botLogger.command(commandName, sender, rawArgs)
+            const startMs = Date.now()
 
             try {
-                // Memory dipisah per sender agar tidak tercampur antar user di grup
-                const aiCtx = isGroup ? `${from}::${sender}` : from
-                const result = await aiService.chat(aiCtx, bodyWithoutMention)
-                const sent = await reply(result.text)
-                if (sent?.key?.id) seamlessTracker.track(sent.key.id)
-                await react('✅')
+                await command.execute(ctx)
+                botLogger.commandDone(commandName, Date.now() - startMs)
             } catch (err) {
+                botLogger.err('handler', err, `cmd:${commandName}`)
                 await react('❌')
-                logger.error('[Mention] AI error:', err.message)
-                await reply(`❌ AI lagi sibuk, coba lagi sebentar.`)
+                await reply(`❌ Error di command *${commandName}*:\n${err.message}`)
             }
+
             return
         }
 
-        // ── ROUTE 3: SEAMLESS AI (reply ke pesan bot) ─
+        // ─────────────────────────────────────────────
+        // ROUTE 2: SEAMLESS AI
+        // ─────────────────────────────────────────────
+
         if (isReplyToBot && body.trim()) {
             if (!memoryService.isAiEnabled(from)) return
 
-            logger.info(`[Seamless] "${body.slice(0, 60)}"`)
+            botLogger.aiTrigger('seamless', body)
             await react('🤔')
+            const startMs = Date.now()
 
             try {
-                const aiCtx = isGroup ? `${from}::${sender}` : from
-                const result = await aiService.chat(aiCtx, body)
+                const result = await aiService.chat(from, body)
+                botLogger.ai(result.provider, result.model, from, Date.now() - startMs)
                 const sent = await reply(result.text)
                 if (sent?.key?.id) seamlessTracker.track(sent.key.id)
                 await react('✅')
             } catch (err) {
                 await react('❌')
-                logger.error('[Seamless] AI error:', err.message)
+                botLogger.err('seamless', err)
             }
             return
         }
 
-        // ── ROUTE 4: DM TRIGGER ───────────────────────
-        if (isDMTrigger) {
+        // ─────────────────────────────────────────────
+        // ROUTE 3: MENTION DI GRUP
+        // ─────────────────────────────────────────────
+
+        if (isMentionedInGroup && bodyWithoutMention) {
             if (!memoryService.isAiEnabled(from)) return
 
-            logger.info(`[DM] "${body.slice(0, 60)}"`)
+            botLogger.aiTrigger('mention', bodyWithoutMention)
             await react('🤔')
+            const startMs = Date.now()
 
             try {
-                const result = await aiService.chat(from, body)
+                const result = await aiService.chat(from, bodyWithoutMention)
+                botLogger.ai(result.provider, result.model, from, Date.now() - startMs)
                 const sent = await reply(result.text)
                 if (sent?.key?.id) seamlessTracker.track(sent.key.id)
                 await react('✅')
             } catch (err) {
                 await react('❌')
-                logger.error('[DM] AI error:', err.message)
+                botLogger.err('mention', err)
+            }
+            return
+        }
+
+        // ─────────────────────────────────────────────
+        // ROUTE 4: DM TRIGGER
+        // ─────────────────────────────────────────────
+
+        if (isDMTrigger) {
+            if (!memoryService.isAiEnabled(from)) return
+
+            botLogger.aiTrigger('dm', body)
+            await react('🤔')
+            const startMs = Date.now()
+
+            try {
+                const result = await aiService.chat(from, body)
+                botLogger.ai(result.provider, result.model, from, Date.now() - startMs)
+                const sent = await reply(result.text)
+                if (sent?.key?.id) seamlessTracker.track(sent.key.id)
+                await react('✅')
+            } catch (err) {
+                await react('❌')
+                botLogger.err('dm', err)
             }
             return
         }
 
     } catch (err) {
-        // Jangan crash bot — log dan swallow
-        logger.error('❌ Fatal error di message handler:', err.message, err.stack?.split('\n')[1])
+        botLogger.err('handler', err, 'fatal')
+        logger.error(err)
     }
 }
