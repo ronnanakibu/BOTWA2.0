@@ -27,7 +27,7 @@ export default {
 
         if (!apiKey) {
             // Fallback: cek tanpa API key via urlscan.io public API
-            return this.#fallbackCheck(url, reply, react)
+            return this.fallbackCheck(url, reply, react)
         }
 
         try {
