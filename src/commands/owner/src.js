@@ -6,7 +6,7 @@
 
 import fs from 'fs'
 import path from 'path'
-import { isBotOwner } from '../../middleware/groupGuard.js'
+import { isOwner } from '../../middleware/permission.js'
 
 // ─────────────────────────────────────────────
 // ROOT — resolve dari CWD (root project), bukan dari lokasi file ini
@@ -65,7 +65,7 @@ export default {
 
         // ── OWNER GUARD ───────────────────────────────
         // FIX: pakai isBotOwner() yang sudah handle format nomor
-        if (!isBotOwner(sender)) {
+        if (!isOwner(sender)) {
             await react('🚫')
             // Jangan silent — kasih tau kenapa gagal (hanya di console, WA silent)
             console.warn(`[src] Akses ditolak dari: ${sender}`)
