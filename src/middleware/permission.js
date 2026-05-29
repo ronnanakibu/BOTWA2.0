@@ -69,8 +69,27 @@ export async function isGroupAdmin(sock, groupId, jid) {
 
 export async function isBotAdmin(sock, groupId) {
     try {
-        const botJid = normalizeJid(sock.user?.id ?? '')
-        return await isGroupAdmin(sock, groupId, botJid)
+        const rawId = sock.user?.id ?? ''
+        const botJid = normalizeJid(rawId)
+        const botNum = stripJid(rawId)
+
+        const meta = await sock.groupMetadata(groupId)
+        const participants = meta.participants ?? []
+
+        // DEBUG — hapus setelah ketahuan masalahnya
+        console.log('🔍 [isBotAdmin] rawId:', rawId)
+        console.log('🔍 [isBotAdmin] botJid:', botJid)
+        console.log('🔍 [isBotAdmin] botNum:', botNum)
+        console.log('🔍 [isBotAdmin] participants:', participants.map(p => ({ id: p.id, admin: p.admin })))
+
+        const member = participants.find(p =>
+            normalizeJid(p.id) === botJid ||
+            stripJid(p.id) === botNum
+        )
+
+        console.log('🔍 [isBotAdmin] matched member:', member)
+
+        return member?.admin === 'admin' || member?.admin === 'superadmin'
     } catch (err) {
         botLogger.err('permission', err, 'isBotAdmin')
         return false
