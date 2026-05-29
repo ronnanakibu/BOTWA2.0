@@ -4,6 +4,7 @@
 
 import fs from 'fs'
 import path from 'path'
+import { isOwner } from '../../utils/permissions.js'
 
 const PROJECT_ROOT = path.resolve('.')
 const ALLOWED_EXTENSIONS = ['.js', '.json', '.md', '.env', '.txt', '.yaml', '.yml']
@@ -34,9 +35,7 @@ export default {
         const { args, reply, react, sender, from, msg, messageContent, sock } = ctx
 
         // Guard owner — double check di level command
-        const ownerNumber = process.env.OWNER_NUMBER?.replace(/[^0-9]/g, '')
-        const senderNumber = sender?.replace(/[^0-9@].*/, '').replace(/[^0-9]/g, '')
-        if (senderNumber !== ownerNumber) return reply('⛔ Akses ditolak.')
+        if (!isOwner(sender)) return reply('⛔ Akses ditolak.')
 
         const subCmd = args[0]?.toLowerCase()
 

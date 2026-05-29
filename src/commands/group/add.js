@@ -2,7 +2,7 @@
 // !add — Tambahkan member ke grup via nomor HP
 // Alias: !tambah, !invite
 
-import { groupGuard, isBotOwner } from '../../middleware/groupGuard.js'
+import { groupGuard } from '../../middleware/groupGuard.js'
 
 /**
  * Normalize phone number ke format JID WhatsApp
