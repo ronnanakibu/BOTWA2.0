@@ -10,10 +10,11 @@ import { isGroupAdmin, isOwner } from '../utils/permissions.js'
 
 function normalizeJid(jid = '') {
     if (!jid) return ''
-    return jid
-        .replace(/:\d+@/, '@')   // strip device suffix
-        .toLowerCase()
-        .trim()
+    if (jid.endsWith('@g.us')) return jid // Biarkan JID grup apa adanya
+
+    // Pisahin berdasarkan @ dan : untuk ambil murni nomor HP-nya saja
+    const pureNumber = jid.split('@')[0].split(':')[0]
+    return `${pureNumber}@s.whatsapp.net`
 }
 
 function jidToPhone(jid = '') {
