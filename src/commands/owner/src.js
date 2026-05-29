@@ -1,43 +1,46 @@
 // src/commands/owner/src.js
 // !src — Owner-only: baca, list, dan edit source code bot secara langsung dari WA
-// Alias: !source, !fs
+// FIX: PROJECT_ROOT resolve dari process.cwd(), bukan dari file lokasi
+// FIX: silent react ❌ sekarang ada error message yang jelas
+// FIX: prefix support ! maupun /
 
 import fs from 'fs'
 import path from 'path'
+import { isBotOwner } from '../../middleware/groupGuard.js'
 
-const PROJECT_ROOT = path.resolve('./src')
+// ─────────────────────────────────────────────
+// ROOT — resolve dari CWD (root project), bukan dari lokasi file ini
+// Dulu: path.resolve('./src') → bisa salah kalau CWD berbeda
+// Sekarang: selalu dari root project
+// ─────────────────────────────────────────────
 
-// Ekstensi yang boleh dibaca/diedit
-const ALLOWED_EXT = ['.js', '.json', '.env.example', '.md']
+const PROJECT_ROOT = path.resolve(process.cwd(), 'src')
 
-// Path yang DILARANG diakses (keamanan)
-const BLOCKED_PATHS = [
-    'storage',
-    '.env',
-    'node_modules',
-]
+const ALLOWED_EXT = ['.js', '.json', '.md', '.env.example', '.txt']
+const BLOCKED_PATHS = ['node_modules', '.env', 'storage', '.git']
 
 function isBlocked(filePath) {
     const rel = path.relative(process.cwd(), filePath)
-    return BLOCKED_PATHS.some(b => rel.startsWith(b) || rel.includes(b))
+    return BLOCKED_PATHS.some(b => rel.split(path.sep).includes(b) || rel.startsWith(b))
 }
 
 function isAllowedExt(filePath) {
     return ALLOWED_EXT.some(ext => filePath.endsWith(ext))
 }
 
-function listDir(dirPath, depth = 0) {
-    if (depth > 3) return ''
+function listDir(dirPath, depth = 0, maxDepth = 3) {
+    if (depth > maxDepth) return ''
     let result = ''
     try {
-        const entries = fs.readdirSync(dirPath)
+        const entries = fs.readdirSync(dirPath).sort()
         for (const entry of entries) {
+            if (entry.startsWith('.')) continue
             const full = path.join(dirPath, entry)
             const stat = fs.statSync(full)
             const indent = '  '.repeat(depth)
             if (stat.isDirectory()) {
                 result += `${indent}📁 ${entry}/\n`
-                result += listDir(full, depth + 1)
+                result += listDir(full, depth + 1, maxDepth)
             } else {
                 result += `${indent}📄 ${entry}\n`
             }
@@ -53,149 +56,129 @@ export default {
     aliases: ['source', 'fs', 'code-owner'],
     category: 'owner',
     description: '[OWNER] Baca, list, atau edit source code bot.',
-    usage: '!src list | !src read <path> | !src edit <path> | reply kode baru + !src write <path>',
+    usage: '!src list | !src read <path> | !src write <path>',
     cooldown: 2,
     permissions: ['owner'],
 
     async execute(ctx) {
         const { args, reply, react, msg, sender } = ctx
 
-        // 🔐 OWNER GUARD
-        const ownerNumber = process.env.OWNER_NUMBER?.replace(/[^0-9]/g, '') + '@s.whatsapp.net'
-        if (sender !== ownerNumber) {
-            return react('🚫')
+        // ── OWNER GUARD ───────────────────────────────
+        // FIX: pakai isBotOwner() yang sudah handle format nomor
+        if (!isBotOwner(sender)) {
+            await react('🚫')
+            // Jangan silent — kasih tau kenapa gagal (hanya di console, WA silent)
+            console.warn(`[src] Akses ditolak dari: ${sender}`)
+            return
         }
 
-        const subcommand = args[0]?.toLowerCase()
+        const sub = (args[0] ?? 'list').toLowerCase()
 
         // ─────────────────────────────────────────────
-        // !src list [folder]
+        // LIST
         // ─────────────────────────────────────────────
-        if (!subcommand || subcommand === 'list') {
-            const targetDir = args[1]
+        if (sub === 'list' || sub === 'ls') {
+            const targetFolder = args[1]
                 ? path.resolve(PROJECT_ROOT, args[1])
                 : PROJECT_ROOT
 
-            if (isBlocked(targetDir)) {
+            if (isBlocked(targetFolder)) {
                 return reply('🚫 Path ini diblokir.')
             }
-
-            if (!fs.existsSync(targetDir)) {
+            if (!fs.existsSync(targetFolder)) {
                 return reply(`❌ Folder tidak ditemukan: ${args[1] ?? 'src'}`)
             }
 
-            const tree = listDir(targetDir)
-            return reply(`📁 *Struktur ${path.relative(process.cwd(), targetDir)}*\n\n${tree}`)
+            const tree = listDir(targetFolder)
+            const rel = path.relative(process.cwd(), targetFolder)
+            return reply(`📁 *${rel}/*\n\n${tree || '(kosong)'}`)
         }
 
         // ─────────────────────────────────────────────
-        // !src read <path>
-        // !src cat <path>
+        // READ
         // ─────────────────────────────────────────────
-        if (subcommand === 'read' || subcommand === 'cat' || subcommand === 'show') {
+        if (sub === 'read' || sub === 'cat' || sub === 'show') {
             const filePath = args[1]
-            if (!filePath) return reply('❌ Kasih path file-nya.\nContoh: !src read commands/ai/q.js')
+            if (!filePath) {
+                return reply('❌ Kasih path file.\nContoh: !src read commands/ai/q.js')
+            }
 
             const resolved = path.resolve(PROJECT_ROOT, filePath)
 
             if (isBlocked(resolved)) return reply('🚫 File ini diblokir.')
-            if (!isAllowedExt(resolved)) return reply(`🚫 Ekstensi tidak diizinkan. Allowed: ${ALLOWED_EXT.join(', ')}`)
+            if (!isAllowedExt(resolved)) return reply(`🚫 Ekstensi tidak diizinkan.`)
             if (!fs.existsSync(resolved)) return reply(`❌ File tidak ditemukan: ${filePath}`)
 
             try {
                 const content = fs.readFileSync(resolved, 'utf-8')
-                const relPath = path.relative(process.cwd(), resolved)
-
-                // Potong kalau terlalu panjang (WA limit ~65kb)
-                const MAX_CHARS = 3000
-                const truncated = content.length > MAX_CHARS
-                    ? content.slice(0, MAX_CHARS) + `\n\n... [truncated ${content.length - MAX_CHARS} chars]`
+                const rel = path.relative(process.cwd(), resolved)
+                const MAX = 3500
+                const truncated = content.length > MAX
+                    ? content.slice(0, MAX) + `\n\n... [+${content.length - MAX} chars dipotong]`
                     : content
 
-                return reply(`📄 *${relPath}*\n\`\`\`\n${truncated}\n\`\`\``)
+                return reply(`📄 *${rel}*\n\`\`\`\n${truncated}\n\`\`\``)
             } catch (e) {
+                await react('❌')
                 return reply(`❌ Gagal baca file: ${e.message}`)
             }
         }
 
         // ─────────────────────────────────────────────
-        // !src edit <path>
-        // Tampilkan file saat ini, siap di-reply
+        // WRITE — reply ke pesan kode baru + ketik !src write <path>
         // ─────────────────────────────────────────────
-        if (subcommand === 'edit') {
+        if (sub === 'write' || sub === 'save') {
             const filePath = args[1]
-            if (!filePath) return reply('❌ Kasih path file-nya.')
+            if (!filePath) return reply('❌ Kasih path file.\nContoh: !src write commands/ai/q.js')
 
-            const resolved = path.resolve(PROJECT_ROOT, filePath)
-            if (isBlocked(resolved)) return reply('🚫 File ini diblokir.')
-            if (!isAllowedExt(resolved)) return reply(`🚫 Ekstensi tidak diizinkan.`)
-            if (!fs.existsSync(resolved)) return reply(`❌ File tidak ditemukan.`)
-
-            const content = fs.readFileSync(resolved, 'utf-8')
-            const relPath = path.relative(process.cwd(), resolved)
-
-            return reply(
-                `📝 *Edit mode: ${relPath}*\n` +
-                `Reply pesan ini dengan konten baru, lalu kirim:\n` +
-                `*!src write ${filePath}*\n\n` +
-                `Konten saat ini:\n\`\`\`\n${content.slice(0, 2000)}\n\`\`\``
-            )
-        }
-
-        // ─────────────────────────────────────────────
-        // !src write <path>
-        // Reply ke pesan berisi kode baru → overwrite file
-        // ─────────────────────────────────────────────
-        if (subcommand === 'write' || subcommand === 'save') {
-            const filePath = args[1]
-            if (!filePath) return reply('❌ Kasih path file-nya.')
-
-            // Ambil konten baru dari quoted message
+            // Ambil konten dari quoted message
             const quotedText =
                 msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.conversation
                 ?? msg.message?.extendedTextMessage?.contextInfo?.quotedMessage?.extendedTextMessage?.text
+                ?? null
 
             if (!quotedText) {
-                return reply('❌ Reply ke pesan berisi kode baru dulu, baru ketik !src write <path>')
+                return reply(
+                    '❌ Reply ke pesan berisi kode baru dulu, baru ketik !src write <path>\n\n' +
+                    '_Cara: kirim kodenya → reply pesan kode itu dengan !src write namefile.js_'
+                )
             }
 
             const resolved = path.resolve(PROJECT_ROOT, filePath)
             if (isBlocked(resolved)) return reply('🚫 File ini diblokir.')
-            if (!isAllowedExt(resolved)) return reply(`🚫 Ekstensi tidak diizinkan.`)
+            if (!isAllowedExt(resolved)) return reply('🚫 Ekstensi tidak diizinkan.')
 
-            // Pastikan parent folder ada
             const parentDir = path.dirname(resolved)
             if (!fs.existsSync(parentDir)) {
                 return reply(`❌ Folder tidak ditemukan: ${path.relative(process.cwd(), parentDir)}`)
             }
 
             try {
-                // Backup dulu sebelum overwrite
+                // Auto backup sebelum overwrite
                 if (fs.existsSync(resolved)) {
-                    const backupPath = resolved + '.bak'
-                    fs.copyFileSync(resolved, backupPath)
+                    fs.copyFileSync(resolved, resolved + '.bak')
                 }
-
                 fs.writeFileSync(resolved, quotedText, 'utf-8')
-                const relPath = path.relative(process.cwd(), resolved)
+                const rel = path.relative(process.cwd(), resolved)
                 await react('✅')
-                return reply(`✅ File berhasil ditulis: *${relPath}*\nBackup disimpan di ${relPath}.bak`)
+                return reply(`✅ *${rel}* berhasil disimpan!\n_Backup: ${rel}.bak_`)
             } catch (e) {
+                await react('❌')
                 return reply(`❌ Gagal tulis file: ${e.message}`)
             }
         }
 
         // ─────────────────────────────────────────────
-        // !src delete <path> — dengan konfirmasi
+        // DELETE
         // ─────────────────────────────────────────────
-        if (subcommand === 'delete' || subcommand === 'rm') {
+        if (sub === 'delete' || sub === 'del' || sub === 'rm') {
             const filePath = args[1]
             const confirm = args[2]
 
-            if (!filePath) return reply('❌ Kasih path file-nya.')
+            if (!filePath) return reply('❌ Kasih path file.')
             if (confirm !== '--confirm') {
                 return reply(
-                    `⚠️ Yakin hapus *${filePath}*?\n` +
+                    `⚠️ Yakin hapus *${filePath}*?\n\n` +
                     `Ketik: !src delete ${filePath} --confirm`
                 )
             }
@@ -205,28 +188,27 @@ export default {
             if (!fs.existsSync(resolved)) return reply('❌ File tidak ada.')
 
             try {
-                // Backup dulu
-                const backupPath = resolved + '.deleted'
-                fs.copyFileSync(resolved, backupPath)
+                fs.copyFileSync(resolved, resolved + '.deleted')
                 fs.unlinkSync(resolved)
                 await react('🗑️')
-                return reply(`🗑️ File dihapus: *${filePath}*\nBackup: ${filePath}.deleted`)
+                return reply(`🗑️ *${filePath}* dihapus.\n_Backup: ${filePath}.deleted_`)
             } catch (e) {
+                await react('❌')
                 return reply(`❌ Gagal hapus: ${e.message}`)
             }
         }
 
         // ─────────────────────────────────────────────
-        // Help
+        // HELP (fallback)
         // ─────────────────────────────────────────────
         return reply(
             `*🗂️ !src — Owner File System*\n\n` +
-            `*!src list [folder]*\nList isi folder (default: src/)\n\n` +
-            `*!src read <path>*\nBaca isi file\nContoh: !src read commands/ai/q.js\n\n` +
-            `*!src edit <path>*\nTampilkan file untuk diedit\n\n` +
-            `*!src write <path>*\nReply kode baru + ketik ini untuk overwrite\n\n` +
-            `*!src delete <path> --confirm*\nHapus file (backup otomatis)\n\n` +
-            `_Path relatif dari folder src/_`
+            `*!src list [folder]* — List isi folder\n` +
+            `*!src read <path>* — Baca isi file\n` +
+            `*!src write <path>* — Overwrite file (reply ke kode baru)\n` +
+            `*!src delete <path> --confirm* — Hapus file\n\n` +
+            `_Path relatif dari folder src/_\n` +
+            `_Contoh: !src read commands/ai/q.js_`
         )
     }
 }
