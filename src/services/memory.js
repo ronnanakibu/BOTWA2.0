@@ -36,18 +36,15 @@ class MemoryService {
     }
 
     #migrate() {
+        // Step 1: Buat tabel dasar dulu — aman untuk DB lama yang belum punya kolom topic
         this.#db.exec(`
             CREATE TABLE IF NOT EXISTS chat_history (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id     TEXT    NOT NULL,
                 role        TEXT    NOT NULL CHECK(role IN ('user', 'assistant')),
                 content     TEXT    NOT NULL,
-                topic       TEXT    NOT NULL DEFAULT 'general',
                 created_at  INTEGER NOT NULL DEFAULT (unixepoch())
             );
-
-            CREATE INDEX IF NOT EXISTS idx_chat_history_lookup
-                ON chat_history(chat_id, topic, created_at DESC);
 
             CREATE TABLE IF NOT EXISTS chat_config (
                 chat_id     TEXT    PRIMARY KEY,
@@ -57,10 +54,18 @@ class MemoryService {
             );
         `)
 
-        // Migrate existing rows yang belum punya kolom topic
+        // Step 2: Tambah kolom topic SEBELUM buat index yang reference kolom ini
         try {
             this.#db.exec(`ALTER TABLE chat_history ADD COLUMN topic TEXT NOT NULL DEFAULT 'general'`)
         } catch (_) { /* kolom sudah ada, skip */ }
+
+        // Step 3: Baru buat index setelah kolom topic pasti ada
+        try {
+            this.#db.exec(`
+                CREATE INDEX IF NOT EXISTS idx_chat_history_lookup
+                    ON chat_history(chat_id, topic, created_at DESC);
+            `)
+        } catch (_) { /* index sudah ada, skip */ }
     }
 
     // ─────────────────────────────────────────────
