@@ -4,7 +4,7 @@
 
 import fs from 'fs'
 import path from 'path'
-import { isOwner } from '../../utils/permissions.js'
+import { isOwner } from '../../middleware/permission.js'
 
 const PROJECT_ROOT = path.resolve('.')
 const ALLOWED_EXTENSIONS = ['.js', '.json', '.md', '.env', '.txt', '.yaml', '.yml']
