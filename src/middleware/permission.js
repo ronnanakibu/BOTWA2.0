@@ -2,16 +2,10 @@
 
 import { botLogger } from '../utils/logger.js'
 
-// ─────────────────────────────────────────────
-// NORMALIZE JID
-// Handle: @s.whatsapp.net, @lid, @g.us, :xx@ variants
-// ─────────────────────────────────────────────
-
 export function normalizeJid(jid = '') {
     return jid.replace(/:\d+@/, '@').trim()
 }
 
-// Ambil nomor murni dari JID (strip semua suffix)
 function stripJid(jid = '') {
     return jid.replace(/:\d+@.*$/, '').replace(/@.*$/, '').trim()
 }
@@ -22,8 +16,6 @@ function stripJid(jid = '') {
 
 export function isOwner(sender) {
     const ownerRaw = process.env.OWNER_NUMBER ?? ''
-
-    // Support multiple owners: "6281234,6285678"
     const ownerNumbers = ownerRaw
         .split(',')
         .map(n => n.replace(/[^0-9]/g, '').trim())
@@ -33,14 +25,11 @@ export function isOwner(sender) {
     const senderNormalized = normalizeJid(sender)
 
     return ownerNumbers.some(ownerNum => {
-        const ownerJidS = ownerNum + '@s.whatsapp.net'
-        const ownerJidLid = ownerNum + '@lid'
-
         return (
             senderNumber === ownerNum ||
-            senderNormalized === ownerJidS ||
-            senderNormalized === ownerJidLid ||
-            sender.includes(ownerNum)          // fallback numerik
+            senderNormalized === ownerNum + '@s.whatsapp.net' ||
+            senderNormalized === ownerNum + '@lid' ||
+            sender.includes(ownerNum)
         )
     })
 }
@@ -53,11 +42,12 @@ export async function isGroupAdmin(sock, groupId, jid) {
     try {
         const meta = await sock.groupMetadata(groupId)
         const participants = meta.participants ?? []
-        const senderNum = stripJid(jid)
+        const jidNorm = normalizeJid(jid)
+        const jidNum = stripJid(jid)
 
         const member = participants.find(p =>
-            normalizeJid(p.id) === normalizeJid(jid) ||
-            stripJid(p.id) === senderNum
+            normalizeJid(p.id) === jidNorm ||
+            stripJid(p.id) === jidNum
         )
 
         return member?.admin === 'admin' || member?.admin === 'superadmin'
@@ -67,27 +57,36 @@ export async function isGroupAdmin(sock, groupId, jid) {
     }
 }
 
+// ─────────────────────────────────────────────
+// BOT ADMIN CHECK
+// FIX: grup WA baru pakai @lid untuk semua participant.
+// sock.user.id  = 628xxx:20@s.whatsapp.net  (phone-based)
+// sock.user.lid = 188996495921395@lid        (LID bot di grup)
+// Harus cek KEDUANYA biar match participant list.
+// ─────────────────────────────────────────────
+
 export async function isBotAdmin(sock, groupId) {
     try {
-        const rawId = sock.user?.id ?? ''
-        const botJid = normalizeJid(rawId)
-        const botNum = stripJid(rawId)
-
         const meta = await sock.groupMetadata(groupId)
         const participants = meta.participants ?? []
 
-        // DEBUG — hapus setelah ketahuan masalahnya
-        console.log('🔍 [isBotAdmin] rawId:', rawId)
-        console.log('🔍 [isBotAdmin] botJid:', botJid)
-        console.log('🔍 [isBotAdmin] botNum:', botNum)
-        console.log('🔍 [isBotAdmin] participants:', participants.map(p => ({ id: p.id, admin: p.admin })))
+        // Kumpulin semua kemungkinan identitas bot
+        const botIdentities = new Set()
 
-        const member = participants.find(p =>
-            normalizeJid(p.id) === botJid ||
-            stripJid(p.id) === botNum
-        )
+        if (sock.user?.id) {
+            botIdentities.add(normalizeJid(sock.user.id))   // 628xxx@s.whatsapp.net
+            botIdentities.add(stripJid(sock.user.id))        // 628xxx
+        }
+        if (sock.user?.lid) {
+            botIdentities.add(normalizeJid(sock.user.lid))  // 188996xxx@lid  ← FIX UTAMA
+            botIdentities.add(stripJid(sock.user.lid))       // 188996xxx
+        }
 
-        console.log('🔍 [isBotAdmin] matched member:', member)
+        const member = participants.find(p => {
+            const pNorm = normalizeJid(p.id)
+            const pNum = stripJid(p.id)
+            return botIdentities.has(pNorm) || botIdentities.has(pNum)
+        })
 
         return member?.admin === 'admin' || member?.admin === 'superadmin'
     } catch (err) {
