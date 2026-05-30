@@ -4,7 +4,7 @@
 import Database from 'better-sqlite3'
 import path from 'path'
 import { triggerAlarm } from '../../services/alarm.js'
-import { botLogger } from '../../utils/logger.js'
+import { logger } from '../../utils/logger.js'
 
 const DB_PATH = path.resolve(process.env.DB_PATH ?? './storage/database/main.db')
 
@@ -152,7 +152,7 @@ export function initReminderScheduler(sock) {
     _schedulerStarted = true
     _sock = sock
 
-    botLogger.system('Reminder scheduler started')
+    logger.info('Reminder scheduler started')
 
     setInterval(async () => {
         try {
@@ -166,7 +166,7 @@ export function initReminderScheduler(sock) {
 
             for (const reminder of due) {
                 try {
-                    botLogger.reminder(reminder.id, reminder.chat_id)
+                    logger.info(`[Reminder] Firing #${reminder.id} → ${reminder.chat_id}`)
 
                     // Kirim ke chat_id (bisa DM atau grup)
                     // Kalau DM: user_jid = chat_id, call works
@@ -182,11 +182,11 @@ export function initReminderScheduler(sock) {
 
                     db.prepare('UPDATE reminders SET fired = 1 WHERE id = ?').run(reminder.id)
                 } catch (e) {
-                    botLogger.err('scheduler', e, `reminder #${reminder.id}`)
+                    logger.error(`[Reminder] Fire error #${reminder.id}:`, e.message)
                 }
             }
         } catch (e) {
-            botLogger.err('scheduler', e, 'tick')
+            logger.error("[Reminder] Scheduler tick error:", e.message)
         }
     }, 30_000)
 }
