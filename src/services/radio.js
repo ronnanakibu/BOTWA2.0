@@ -12,7 +12,13 @@ import { logger } from '../utils/logger.js'
 // CONSTANTS
 // ─────────────────────────────────────────────
 
-const YTDLP_PATH = process.env.YTDLP_PATH ?? path.resolve('./storage/bin/yt-dlp')
+// YTDLP_PATH di-resolve setiap kali dipakai — bukan di module load time
+// Karena process.env.YTDLP_PATH di-set oleh start.js setelah module ini di-load
+function getYtdlpPath() {
+    return process.env.YTDLP_PATH
+        ?? path.resolve('./storage/bin/yt-dlp_linux')
+        ?? path.resolve('./storage/bin/yt-dlp')
+}
 const TEMP_DIR = path.resolve('./storage/media/radio-temp')
 const RADIO_PORT = parseInt(process.env.RADIO_PORT ?? '8080')
 const MAX_QUEUE = parseInt(process.env.RADIO_MAX_QUEUE ?? '20')
