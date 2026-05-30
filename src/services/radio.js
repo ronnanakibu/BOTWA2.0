@@ -28,17 +28,18 @@ function getYtdlpSpawnConfig() {
 
     // 1. Gunakan konfigurasi yang sudah di-set oleh start.js via env vars
     const envPath = process.env.YTDLP_PATH
-    const envMode = process.env.YTDLP_MODE
+    const envMode = process.env.YTDLP_MODE  // python binary name: python3, python, etc
 
-    if (envPath && envMode === 'python3' && fs.existsSync(envPath)) {
-        logger.debug(`[Radio] yt-dlp: env mode=python3 path=${envPath}`)
-        return { command: 'python3', extraArgs: [envPath] }
+    if (envPath && envMode && (envPath === localDefault || envPath === localPyz || fs.existsSync(envPath))) {
+        // YTDLP_MODE berisi nama interpreter Python yang telah diverifikasi oleh start.js
+        logger.debug(`[Radio] yt-dlp: env mode=${envMode} path=${envPath}`)
+        return { command: envMode, extraArgs: [envPath] }
     }
-    if (envPath && !envMode && fs.existsSync(envPath) && isYtdlpRunnable(envPath)) {
+    if (envPath && !envMode && envPath !== 'yt-dlp' && fs.existsSync(envPath) && isYtdlpRunnable(envPath)) {
         logger.debug(`[Radio] yt-dlp: env mode=native path=${envPath}`)
         return { command: envPath, extraArgs: [] }
     }
-    if (envPath === 'yt-dlp' && isYtdlpRunnable('yt-dlp')) {
+    if ((envPath === 'yt-dlp' || !envPath) && isYtdlpRunnable('yt-dlp')) {
         logger.debug('[Radio] yt-dlp: env mode=system')
         return { command: 'yt-dlp', extraArgs: [] }
     }
@@ -56,13 +57,15 @@ function getYtdlpSpawnConfig() {
         logger.debug('[Radio] yt-dlp: fallback=localLinux native')
         return { command: localLinux, extraArgs: [] }
     }
-    if (fs.existsSync(localPyz) && isYtdlpRunnable('python3', [localPyz, '--version'])) {
-        logger.debug('[Radio] yt-dlp: fallback=localPyz python3')
-        return { command: 'python3', extraArgs: [localPyz] }
-    }
-    if (fs.existsSync(localDefault) && isYtdlpRunnable('python3', [localDefault, '--version'])) {
-        logger.debug('[Radio] yt-dlp: fallback=localDefault python3')
-        return { command: 'python3', extraArgs: [localDefault] }
+    for (const pyCmd of ['python3', 'python']) {
+        if (fs.existsSync(localPyz) && isYtdlpRunnable(pyCmd, [localPyz, '--version'])) {
+            logger.debug(`[Radio] yt-dlp: fallback=localPyz via ${pyCmd}`)
+            return { command: pyCmd, extraArgs: [localPyz] }
+        }
+        if (fs.existsSync(localDefault) && isYtdlpRunnable(pyCmd, [localDefault, '--version'])) {
+            logger.debug(`[Radio] yt-dlp: fallback=localDefault via ${pyCmd}`)
+            return { command: pyCmd, extraArgs: [localDefault] }
+        }
     }
 
     // Semua gagal — log diagnostik yang informatif langsung ke stdout
@@ -521,16 +524,17 @@ class RadioService extends EventEmitter {
 
     #checkYtdlp() {
         const config = getYtdlpSpawnConfig()
-        if (config.command === 'yt-dlp' || config.command === 'python3' || config.command === 'python') {
-            return
-        }
+        // Interpreter commands (python*, yt-dlp system) — bypass file check
+        const isInterpreter = ['yt-dlp', 'python3', 'python'].includes(config.command) ||
+            config.command.startsWith('/usr/')
+        if (isInterpreter) return
         if (!fs.existsSync(config.command)) {
             const msg = `yt-dlp tidak ditemukan: ${config.command}. Restart bot untuk re-download.`
             process.stdout.write(`\x1b[31m[ERROR] [Radio] ${msg}\x1b[0m\n`)
             throw new Error(msg)
         }
         if (!isYtdlpRunnable(config.command)) {
-            const msg = `yt-dlp ada di ${config.command} tapi tidak bisa dieksekusi (glibc mismatch / OS tidak kompatibel). Restart bot untuk download zipapp.`
+            const msg = `yt-dlp ada di ${config.command} tapi tidak bisa dieksekusi. Restart bot untuk download ulang.`
             process.stdout.write(`\x1b[31m[ERROR] [Radio] ${msg}\x1b[0m\n`)
             throw new Error(msg)
         }

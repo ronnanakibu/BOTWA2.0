@@ -31,6 +31,21 @@ function canRun(cmd, args = ['--version']) {
     catch { return false }
 }
 
+// Coba semua nama Python yang mungkin ada di server
+const PYTHON_CANDIDATES = [
+    'python3', 'python', 'python3.13', 'python3.12', 'python3.11',
+    'python3.10', 'python3.9', 'python3.8',
+    '/usr/bin/python3', '/usr/local/bin/python3',
+    '/usr/bin/python', '/usr/local/bin/python',
+]
+
+function findPython(testArgs = ['--version']) {
+    for (const p of PYTHON_CANDIDATES) {
+        if (canRun(p, testArgs)) return p
+    }
+    return null
+}
+
 function downloadFile(url, destPath) {
     return new Promise((resolve, reject) => {
         const request = (targetUrl) => {
@@ -221,12 +236,13 @@ async function setupYtDlp() {
         wrn(`yt-dlp ELF ada tapi tidak bisa dijalankan (kemungkinan Alpine/musl Linux). Beralih ke zipapp...`)
     }
 
-    // 3. Cek zipapp lokal: ada dan bisa dijalankan via python3?
+    // 3. Cek zipapp lokal dengan semua interpreter Python yang mungkin
     if (fs.existsSync(YTDLP_PYZ_PATH) && fs.statSync(YTDLP_PYZ_PATH).size > 1_000_000) {
-        if (canRun('python3', [YTDLP_PYZ_PATH])) {
-            ok(`yt-dlp (python3 zipapp): ${(fs.statSync(YTDLP_PYZ_PATH).size / 1024 / 1024).toFixed(1)} MB`)
+        const python = findPython([YTDLP_PYZ_PATH, '--version'])
+        if (python) {
+            ok(`yt-dlp (zipapp via ${python}): ${(fs.statSync(YTDLP_PYZ_PATH).size / 1024 / 1024).toFixed(1)} MB`)
             process.env.YTDLP_PATH = YTDLP_PYZ_PATH
-            process.env.YTDLP_MODE = 'python3'
+            process.env.YTDLP_MODE = python
             return
         }
     }
@@ -251,27 +267,50 @@ async function setupYtDlp() {
         }
     }
 
-    // 5. Download Python zipapp (universal, works on Alpine/musl via python3)
-    inf('Downloading yt-dlp Python zipapp (~4MB, universal untuk semua Linux)...')
-    try {
-        if (fs.existsSync(YTDLP_PYZ_PATH)) fs.unlinkSync(YTDLP_PYZ_PATH)
-        await downloadFile(YTDLP_URL_PYZ, YTDLP_PYZ_PATH)
-        fs.chmodSync(YTDLP_PYZ_PATH, '755')
-        const sizeMB = (fs.statSync(YTDLP_PYZ_PATH).size / 1024 / 1024).toFixed(1)
-        ok(`yt-dlp zipapp downloaded: ${sizeMB} MB`)
-        if (canRun('python3', [YTDLP_PYZ_PATH])) {
-            ok('yt-dlp zipapp via python3: runnable ✓')
-            process.env.YTDLP_PATH = YTDLP_PYZ_PATH
-            process.env.YTDLP_MODE = 'python3'
-            return
+    // 5. Download Python zipapp, coba semua interpreter Python
+    if (!fs.existsSync(YTDLP_PYZ_PATH) || fs.statSync(YTDLP_PYZ_PATH).size < 1_000_000) {
+        inf('Downloading yt-dlp Python zipapp (~4MB, universal untuk semua Linux)...')
+        try {
+            if (fs.existsSync(YTDLP_PYZ_PATH)) fs.unlinkSync(YTDLP_PYZ_PATH)
+            await downloadFile(YTDLP_URL_PYZ, YTDLP_PYZ_PATH)
+            fs.chmodSync(YTDLP_PYZ_PATH, '755')
+            ok(`yt-dlp zipapp downloaded: ${(fs.statSync(YTDLP_PYZ_PATH).size / 1024 / 1024).toFixed(1)} MB`)
+        } catch (e) {
+            wrn(`Gagal download yt-dlp zipapp: ${e.message}`)
         }
-        wrn('python3 tidak ditemukan! yt-dlp zipapp tidak bisa dijalankan.')
-    } catch (e) {
-        wrn(`Gagal download yt-dlp zipapp: ${e.message}`)
     }
 
-    wrn('PERINGATAN: yt-dlp tidak bisa dijalankan. Fitur radio tidak akan berfungsi.')
-    wrn('Solusi: install yt-dlp secara manual: pip install yt-dlp atau apt install yt-dlp')
+    if (fs.existsSync(YTDLP_PYZ_PATH)) {
+        const python = findPython([YTDLP_PYZ_PATH, '--version'])
+        if (python) {
+            ok(`yt-dlp zipapp via ${python}: runnable ✓`)
+            process.env.YTDLP_PATH = YTDLP_PYZ_PATH
+            process.env.YTDLP_MODE = python
+            return
+        }
+    }
+
+    // 6. Terakhir: coba install via pip
+    inf('Mencoba install yt-dlp via pip (last resort)...')
+    const pipCmds = ['pip3 install -q --user yt-dlp', 'pip install -q --user yt-dlp']
+    for (const pipCmd of pipCmds) {
+        try {
+            inf(`Running: ${pipCmd}`)
+            execSync(pipCmd, { stdio: 'pipe', timeout: 120_000 })
+            if (canRun('yt-dlp')) {
+                const realPath = (() => { try { return execSync('which yt-dlp', { stdio: 'pipe' }).toString().trim() } catch { return 'yt-dlp' } })()
+                ok(`yt-dlp berhasil diinstall via pip: ${realPath}`)
+                process.env.YTDLP_PATH = 'yt-dlp'
+                return
+            }
+        } catch (_) { /* pip tidak tersedia atau gagal */ }
+    }
+
+    wrn('GAGAL: yt-dlp tidak bisa dijalankan di server ini.')
+    wrn('Diagnosis:')
+    wrn(`  - glibc binary: tidak support (Alpine/musl Linux)`)
+    wrn(`  - Python tersedia: ${findPython() ?? 'TIDAK ADA'}`)
+    wrn(`  - Solusi: hubungi hosting untuk install python3 atau yt-dlp secara manual`)
 }
 
 // ─────────────────────────────────────────────
@@ -318,14 +357,17 @@ function validateEnv() {
 function printSummary() {
     const fonts = fs.readdirSync(FONT_DIR).filter(f => f.endsWith('.ttf') || f.endsWith('.otf'))
     const hasFfmpeg = commandExists('ffmpeg') || fs.existsSync(FFMPEG_PATH)
-    const hasYtdlp = commandExists('yt-dlp') || fs.existsSync(YTDLP_PATH)
+    // Hanya true jika YTDLP_PATH benar-benar ter-set oleh setupYtDlp (artinya bisa dijalankan)
+    const hasYtdlp = !!process.env.YTDLP_PATH
+    const ytdlpMode = process.env.YTDLP_MODE ? ` via ${process.env.YTDLP_MODE}` : ''
+    const ytdlpInfo = hasYtdlp ? `✅ ready${ytdlpMode}` : '❌ tidak bisa dijalankan (radio disabled)'
 
     console.log('\n' + '─'.repeat(50))
     console.log('  🤖 RonnBot v2.0 — Bootstrap Summary')
     console.log('─'.repeat(50))
     console.log(`  Fonts         : ${fonts.length > 0 ? fonts.join(', ') : 'none'}`)
     console.log(`  FFmpeg        : ${hasFfmpeg ? '✅ available' : '❌ not found (radio disabled)'}`)
-    console.log(`  yt-dlp        : ${hasYtdlp ? '✅ ready' : '❌ not found (radio disabled)'}`)
+    console.log(`  yt-dlp        : ${ytdlpInfo}`)
     console.log(`  Owner         : ${process.env.OWNER_NUMBER ?? 'not set'}`)
     console.log(`  Prefix        : ${process.env.BOT_PREFIX ?? '!'}`)
     console.log(`  Session path  : ${process.env.SESSION_PATH ?? './storage/sessions'}`)
