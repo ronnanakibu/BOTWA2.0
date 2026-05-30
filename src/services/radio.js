@@ -14,7 +14,7 @@ import { logger } from '../utils/logger.js'
 
 function isYtdlpRunnable(cmd, args = ['--version']) {
     try {
-        execSync(`${cmd} ${args.join(' ')}`, { stdio: 'pipe' })
+        execSync(`${cmd} ${args.join(' ')}`, { stdio: 'pipe', timeout: 5000 })
         return true
     } catch (_) {
         return false
@@ -22,48 +22,61 @@ function isYtdlpRunnable(cmd, args = ['--version']) {
 }
 
 function getYtdlpSpawnConfig() {
-    // 1. Cek apakah global 'yt-dlp' bisa dijalankan
-    if (isYtdlpRunnable('yt-dlp')) {
-        try {
-            const realPath = execSync(process.platform === 'win32' ? 'where yt-dlp' : 'which yt-dlp', { stdio: 'pipe' }).toString().trim()
-            if (!realPath.includes('storage/bin/yt-dlp') || isYtdlpRunnable(realPath)) {
-                return { command: 'yt-dlp', extraArgs: [] }
-            }
-        } catch (_) {
-            return { command: 'yt-dlp', extraArgs: [] }
-        }
-    }
-
     const localDefault = path.resolve('./storage/bin/yt-dlp')
-    const localLinux = path.resolve('./storage/bin/yt-dlp_linux')
+    const localPyz     = path.resolve('./storage/bin/yt-dlp.pyz')
+    const localLinux   = path.resolve('./storage/bin/yt-dlp_linux')
 
-    // 2. Cek localLinux secara native
-    if (fs.existsSync(localLinux) && isYtdlpRunnable(localLinux)) {
-        return { command: localLinux, extraArgs: [] }
+    // 1. Gunakan konfigurasi yang sudah di-set oleh start.js via env vars
+    const envPath = process.env.YTDLP_PATH
+    const envMode = process.env.YTDLP_MODE
+
+    if (envPath && envMode === 'python3' && fs.existsSync(envPath)) {
+        logger.debug(`[Radio] yt-dlp: env mode=python3 path=${envPath}`)
+        return { command: 'python3', extraArgs: [envPath] }
+    }
+    if (envPath && !envMode && fs.existsSync(envPath) && isYtdlpRunnable(envPath)) {
+        logger.debug(`[Radio] yt-dlp: env mode=native path=${envPath}`)
+        return { command: envPath, extraArgs: [] }
+    }
+    if (envPath === 'yt-dlp' && isYtdlpRunnable('yt-dlp')) {
+        logger.debug('[Radio] yt-dlp: env mode=system')
+        return { command: 'yt-dlp', extraArgs: [] }
     }
 
-    // 3. Cek localDefault secara native
+    // 2. Fallback: coba semua opsi dari awal
+    if (isYtdlpRunnable('yt-dlp')) {
+        logger.debug('[Radio] yt-dlp: fallback=system yt-dlp')
+        return { command: 'yt-dlp', extraArgs: [] }
+    }
     if (fs.existsSync(localDefault) && isYtdlpRunnable(localDefault)) {
+        logger.debug('[Radio] yt-dlp: fallback=localDefault native')
         return { command: localDefault, extraArgs: [] }
     }
-
-    // 4. Cek localDefault via python3 (untuk Alpine Linux zipapp compatibility)
+    if (fs.existsSync(localLinux) && isYtdlpRunnable(localLinux)) {
+        logger.debug('[Radio] yt-dlp: fallback=localLinux native')
+        return { command: localLinux, extraArgs: [] }
+    }
+    if (fs.existsSync(localPyz) && isYtdlpRunnable('python3', [localPyz, '--version'])) {
+        logger.debug('[Radio] yt-dlp: fallback=localPyz python3')
+        return { command: 'python3', extraArgs: [localPyz] }
+    }
     if (fs.existsSync(localDefault) && isYtdlpRunnable('python3', [localDefault, '--version'])) {
+        logger.debug('[Radio] yt-dlp: fallback=localDefault python3')
         return { command: 'python3', extraArgs: [localDefault] }
     }
 
-    // 5. Cek localDefault via python
-    if (fs.existsSync(localDefault) && isYtdlpRunnable('python', [localDefault, '--version'])) {
-        return { command: 'python', extraArgs: [localDefault] }
-    }
+    // Semua gagal — log diagnostik yang informatif langsung ke stdout
+    const diag = [
+        `YTDLP_PATH=${envPath ?? 'unset'}`,
+        `YTDLP_MODE=${envMode ?? 'unset'}`,
+        `localDefault exists=${fs.existsSync(localDefault)}`,
+        `localPyz exists=${fs.existsSync(localPyz)}`,
+        `localLinux exists=${fs.existsSync(localLinux)}`,
+    ].join(' | ')
+    process.stdout.write(`\x1b[31m[ERROR] [Radio] yt-dlp: semua strategi gagal. ${diag}\x1b[0m\n`)
 
-    // 6. Cek localLinux via python3
-    if (fs.existsSync(localLinux) && isYtdlpRunnable('python3', [localLinux, '--version'])) {
-        return { command: 'python3', extraArgs: [localLinux] }
-    }
-
-    // Fallback default jika semua gagal
-    return { command: localDefault, extraArgs: [] }
+    // Return default walau gagal, error akan ditangkap saat spawn
+    return { command: localPyz.length && fs.existsSync(localPyz) ? localPyz : localDefault, extraArgs: [] }
 }
 const TEMP_DIR = path.resolve('./storage/media/radio-temp')
 const RADIO_PORT = parseInt(process.env.RADIO_PORT ?? '8080')
@@ -511,8 +524,15 @@ class RadioService extends EventEmitter {
         if (config.command === 'yt-dlp' || config.command === 'python3' || config.command === 'python') {
             return
         }
-        if (!fs.existsSync(config.command) || !isYtdlpRunnable(config.command)) {
-            throw new Error('yt-dlp tidak dapat dijalankan di server ini. Silakan pasang yt-dlp secara global di panel Pterodactyl.')
+        if (!fs.existsSync(config.command)) {
+            const msg = `yt-dlp tidak ditemukan: ${config.command}. Restart bot untuk re-download.`
+            process.stdout.write(`\x1b[31m[ERROR] [Radio] ${msg}\x1b[0m\n`)
+            throw new Error(msg)
+        }
+        if (!isYtdlpRunnable(config.command)) {
+            const msg = `yt-dlp ada di ${config.command} tapi tidak bisa dieksekusi (glibc mismatch / OS tidak kompatibel). Restart bot untuk download zipapp.`
+            process.stdout.write(`\x1b[31m[ERROR] [Radio] ${msg}\x1b[0m\n`)
+            throw new Error(msg)
         }
     }
 

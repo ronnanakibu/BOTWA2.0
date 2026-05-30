@@ -26,6 +26,11 @@ function commandExists(cmd) {
     catch { return false }
 }
 
+function canRun(cmd, args = ['--version']) {
+    try { execSync(`${cmd} ${args.join(' ')}`, { stdio: 'pipe', timeout: 5000 }); return true }
+    catch { return false }
+}
+
 function downloadFile(url, destPath) {
     return new Promise((resolve, reject) => {
         const request = (targetUrl) => {
@@ -186,46 +191,87 @@ async function setupFfmpeg() {
     }
 }
 
-// ─────────────────────────────────────────────
-// STEP 4: YT-DLP BINARY DOWNLOAD
-// Standalone binary — tidak butuh Python sama sekali
-// ─────────────────────────────────────────────
-
-const YTDLP_PATH = path.resolve('./storage/bin/yt-dlp')
-// Explicit Linux standalone binary — bukan Python script
-// _linux binary adalah ELF compiled, tidak butuh Python sama sekali
-const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux'
+// Dua URL: native ELF (cepat, tidak butuh python) dan zipapp (universal, butuh python3)
+const YTDLP_PATH     = path.resolve('./storage/bin/yt-dlp')       // native ELF binary
+const YTDLP_PYZ_PATH = path.resolve('./storage/bin/yt-dlp.pyz')   // python zipapp fallback
+const YTDLP_URL_ELF  = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux'
+const YTDLP_URL_PYZ  = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp'
 
 async function setupYtDlp() {
-    if (commandExists('yt-dlp')) {
-        ok('yt-dlp (system): available globally')
-        process.env.YTDLP_PATH = 'yt-dlp'
-        return
+    // 1. Cek yt-dlp global yang benar-benar bisa dijalankan
+    //    (bukan cuma 'which' — karena ./storage/bin juga di PATH dan bisa menipu)
+    if (canRun('yt-dlp')) {
+        const realPath = (() => { try { return execSync('which yt-dlp', { stdio: 'pipe' }).toString().trim() } catch { return 'yt-dlp' } })()
+        // Pastikan bukan binary lokal kita yang broken
+        if (!realPath.includes('storage/bin')) {
+            ok(`yt-dlp (system): ${realPath}`)
+            process.env.YTDLP_PATH = 'yt-dlp'
+            return
+        }
     }
 
-    if (fs.existsSync(YTDLP_PATH)) {
-        const size = fs.statSync(YTDLP_PATH).size
-        if (size > 20_000_000) { // > 20MB = valid ELF binary (bukan Python script 3MB)
-            ok(`yt-dlp exists: ${(size / 1024 / 1024).toFixed(1)} MB`)
+    // 2. Cek binary ELF lokal: ada dan bisa dijalankan secara native?
+    if (fs.existsSync(YTDLP_PATH) && fs.statSync(YTDLP_PATH).size > 10_000_000) {
+        if (canRun(YTDLP_PATH)) {
+            ok(`yt-dlp (native ELF): ${(fs.statSync(YTDLP_PATH).size / 1024 / 1024).toFixed(1)} MB`)
             try { fs.chmodSync(YTDLP_PATH, '755') } catch (_) { }
             process.env.YTDLP_PATH = YTDLP_PATH
             return
         }
-        wrn(`yt-dlp terlalu kecil (${(fs.statSync(YTDLP_PATH).size / 1024 / 1024).toFixed(1)}MB) — itu Python script, bukan binary. Re-downloading...`)
-        fs.unlinkSync(YTDLP_PATH)
+        wrn(`yt-dlp ELF ada tapi tidak bisa dijalankan (kemungkinan Alpine/musl Linux). Beralih ke zipapp...`)
     }
 
-    inf('Downloading yt-dlp Linux binary (~30MB, hanya sekali)...')
-    try {
-        await downloadFile(YTDLP_URL, YTDLP_PATH)
-        fs.chmodSync(YTDLP_PATH, '755')
-        const size = fs.statSync(YTDLP_PATH).size
-        ok(`yt-dlp downloaded: ${(size / 1024 / 1024).toFixed(1)} MB`)
-        process.env.YTDLP_PATH = YTDLP_PATH
-    } catch (e) {
-        wrn(`Gagal download yt-dlp: ${e.message}`)
-        wrn('Fitur radio dan downloader tidak akan berfungsi.')
+    // 3. Cek zipapp lokal: ada dan bisa dijalankan via python3?
+    if (fs.existsSync(YTDLP_PYZ_PATH) && fs.statSync(YTDLP_PYZ_PATH).size > 1_000_000) {
+        if (canRun('python3', [YTDLP_PYZ_PATH])) {
+            ok(`yt-dlp (python3 zipapp): ${(fs.statSync(YTDLP_PYZ_PATH).size / 1024 / 1024).toFixed(1)} MB`)
+            process.env.YTDLP_PATH = YTDLP_PYZ_PATH
+            process.env.YTDLP_MODE = 'python3'
+            return
+        }
     }
+
+    // 4. Download ELF binary terlebih dahulu (jika belum atau corrupt)
+    if (!fs.existsSync(YTDLP_PATH) || fs.statSync(YTDLP_PATH).size < 10_000_000) {
+        inf('Downloading yt-dlp Linux ELF binary (~30MB)...')
+        try {
+            if (fs.existsSync(YTDLP_PATH)) fs.unlinkSync(YTDLP_PATH)
+            await downloadFile(YTDLP_URL_ELF, YTDLP_PATH)
+            fs.chmodSync(YTDLP_PATH, '755')
+            const sizeMB = (fs.statSync(YTDLP_PATH).size / 1024 / 1024).toFixed(1)
+            ok(`yt-dlp ELF downloaded: ${sizeMB} MB`)
+            if (canRun(YTDLP_PATH)) {
+                ok('yt-dlp ELF: runnable ✓')
+                process.env.YTDLP_PATH = YTDLP_PATH
+                return
+            }
+            wrn('yt-dlp ELF tidak bisa dijalankan di OS ini (glibc missing). Downloading zipapp...')
+        } catch (e) {
+            wrn(`Gagal download yt-dlp ELF: ${e.message}`)
+        }
+    }
+
+    // 5. Download Python zipapp (universal, works on Alpine/musl via python3)
+    inf('Downloading yt-dlp Python zipapp (~4MB, universal untuk semua Linux)...')
+    try {
+        if (fs.existsSync(YTDLP_PYZ_PATH)) fs.unlinkSync(YTDLP_PYZ_PATH)
+        await downloadFile(YTDLP_URL_PYZ, YTDLP_PYZ_PATH)
+        fs.chmodSync(YTDLP_PYZ_PATH, '755')
+        const sizeMB = (fs.statSync(YTDLP_PYZ_PATH).size / 1024 / 1024).toFixed(1)
+        ok(`yt-dlp zipapp downloaded: ${sizeMB} MB`)
+        if (canRun('python3', [YTDLP_PYZ_PATH])) {
+            ok('yt-dlp zipapp via python3: runnable ✓')
+            process.env.YTDLP_PATH = YTDLP_PYZ_PATH
+            process.env.YTDLP_MODE = 'python3'
+            return
+        }
+        wrn('python3 tidak ditemukan! yt-dlp zipapp tidak bisa dijalankan.')
+    } catch (e) {
+        wrn(`Gagal download yt-dlp zipapp: ${e.message}`)
+    }
+
+    wrn('PERINGATAN: yt-dlp tidak bisa dijalankan. Fitur radio tidak akan berfungsi.')
+    wrn('Solusi: install yt-dlp secara manual: pip install yt-dlp atau apt install yt-dlp')
 }
 
 // ─────────────────────────────────────────────

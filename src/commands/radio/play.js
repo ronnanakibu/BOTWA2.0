@@ -82,6 +82,7 @@ export default {
                 }
 
             } catch (err) {
+                process.stdout.write(`\x1b[31m[ERROR] [Radio:play] ${err.message}\x1b[0m\n`)
                 await react('❌')
                 await reply(`❌ Gagal cari lagu: ${err.message}`)
             }
