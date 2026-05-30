@@ -13,6 +13,7 @@ import { loadCommands } from './loader.js'
 import { handleIncomingMessage } from '../handlers/message.js'
 import { botLogger } from '../utils/logger.js'
 import { initReminderScheduler } from '../commands/general/remindme.js'
+import { startRadioServer } from '../server/radio.js'
 
 const pinoLogger = pino({ level: 'silent' }) // suppress Baileys internal noise
 
@@ -44,6 +45,8 @@ async function startBot() {
     try {
         await loadCommands()
         botLogger.system('Commands loaded ✓')
+        startRadioServer()
+        botLogger.system('Radio server started ✓')
     } catch (err) {
         botLogger.err('bot', err, 'loadCommands')
     }
