@@ -199,6 +199,12 @@ const YTDLP_PATH = path.resolve('./storage/bin/yt-dlp')
 const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux'
 
 async function setupYtDlp() {
+    if (commandExists('yt-dlp')) {
+        ok('yt-dlp (system): available globally')
+        process.env.YTDLP_PATH = 'yt-dlp'
+        return
+    }
+
     if (fs.existsSync(YTDLP_PATH)) {
         const size = fs.statSync(YTDLP_PATH).size
         if (size > 20_000_000) { // > 20MB = valid ELF binary (bukan Python script 3MB)
@@ -268,7 +274,7 @@ function validateEnv() {
 function printSummary() {
     const fonts = fs.readdirSync(FONT_DIR).filter(f => f.endsWith('.ttf') || f.endsWith('.otf'))
     const hasFfmpeg = commandExists('ffmpeg') || fs.existsSync(FFMPEG_PATH)
-    const hasYtdlp = fs.existsSync(YTDLP_PATH)
+    const hasYtdlp = commandExists('yt-dlp') || fs.existsSync(YTDLP_PATH)
 
     console.log('\n' + '─'.repeat(50))
     console.log('  🤖 RonnBot v2.0 — Bootstrap Summary')

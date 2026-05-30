@@ -12,12 +12,34 @@ import { logger } from '../utils/logger.js'
 // CONSTANTS
 // ─────────────────────────────────────────────
 
+function commandExists(cmd) {
+    try {
+        const checkCmd = process.platform === 'win32' ? `where ${cmd}` : `which ${cmd}`
+        execSync(checkCmd, { stdio: 'pipe' })
+        return true
+    } catch (_) {
+        return false
+    }
+}
+
 // YTDLP_PATH di-resolve setiap kali dipakai — bukan di module load time
 // Karena process.env.YTDLP_PATH di-set oleh start.js setelah module ini di-load
 function getYtdlpPath() {
-    return process.env.YTDLP_PATH
-        ?? path.resolve('./storage/bin/yt-dlp_linux')
-        ?? path.resolve('./storage/bin/yt-dlp')
+    // 1. Cek apakah yt-dlp terpasang secara global di PATH sistem
+    if (commandExists('yt-dlp')) {
+        return 'yt-dlp'
+    }
+
+    // 2. Cek process.env.YTDLP_PATH
+    if (process.env.YTDLP_PATH && fs.existsSync(process.env.YTDLP_PATH)) {
+        return process.env.YTDLP_PATH
+    }
+
+    // 3. Fallbacks ke path lokal
+    const localLinux = path.resolve('./storage/bin/yt-dlp_linux')
+    if (fs.existsSync(localLinux)) return localLinux
+
+    return path.resolve('./storage/bin/yt-dlp')
 }
 const TEMP_DIR = path.resolve('./storage/media/radio-temp')
 const RADIO_PORT = parseInt(process.env.RADIO_PORT ?? '8080')
@@ -128,10 +150,21 @@ class RadioService extends EventEmitter {
             let output = ''
             let errOutput = ''
 
+            const timeoutId = setTimeout(() => {
+                try { proc.kill() } catch (_) {}
+                reject(new Error('Search timeout.'))
+            }, 15_000)
+
+            proc.on('error', (err) => {
+                clearTimeout(timeoutId)
+                reject(new Error(`Gagal menjalankan yt-dlp: ${err.message}`))
+            })
+
             proc.stdout.on('data', d => output += d.toString())
             proc.stderr.on('data', d => errOutput += d.toString())
 
             proc.on('close', (code) => {
+                clearTimeout(timeoutId)
                 if (code !== 0 || !output.trim()) {
                     return reject(new Error(`yt-dlp gagal: ${errOutput.slice(0, 100)}`))
                 }
@@ -147,9 +180,6 @@ class RadioService extends EventEmitter {
                     requestedBy
                 }))
             })
-
-            // Timeout 15 detik untuk search
-            setTimeout(() => { proc.kill(); reject(new Error('Search timeout.')) }, 15_000)
         })
     }
 
