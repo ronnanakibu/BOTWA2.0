@@ -124,7 +124,7 @@ class RadioService extends EventEmitter {
                 ytQuery
             ]
 
-            const proc = spawn(YTDLP_PATH, args)
+            const proc = spawn(getYtdlpPath(), args)
             let output = ''
             let errOutput = ''
 
@@ -251,7 +251,7 @@ class RadioService extends EventEmitter {
                 track.url
             ]
 
-            const ytProc = spawn(YTDLP_PATH, ytArgs)
+            const ytProc = spawn(getYtdlpPath(), ytArgs)
             this.#ytdlp = ytProc
             let streamUrl = ''
             let ytErr = ''
@@ -451,7 +451,7 @@ class RadioService extends EventEmitter {
     }
 
     #checkYtdlp() {
-        if (!fs.existsSync(YTDLP_PATH)) {
+        if (!fs.existsSync(getYtdlpPath())) {
             throw new Error('yt-dlp tidak ditemukan. Jalankan ulang bot untuk download otomatis.')
         }
     }
