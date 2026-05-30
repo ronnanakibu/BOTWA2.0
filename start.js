@@ -194,27 +194,27 @@ async function setupFfmpeg() {
 // ─────────────────────────────────────────────
 
 const YTDLP_PATH = path.resolve('./storage/bin/yt-dlp')
-// GitHub releases selalu point ke versi terbaru
-const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp'
+// Explicit Linux standalone binary — bukan Python script
+// _linux binary adalah ELF compiled, tidak butuh Python sama sekali
+const YTDLP_URL = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux'
 
 async function setupYtDlp() {
-    // Cek apakah sudah ada dan ukurannya valid (binary ~30MB)
     if (fs.existsSync(YTDLP_PATH)) {
         const size = fs.statSync(YTDLP_PATH).size
-        if (size > 1_000_000) {
+        if (size > 20_000_000) { // > 20MB = valid ELF binary (bukan Python script 3MB)
             ok(`yt-dlp exists: ${(size / 1024 / 1024).toFixed(1)} MB`)
             try { fs.chmodSync(YTDLP_PATH, '755') } catch (_) { }
             process.env.YTDLP_PATH = YTDLP_PATH
             return
         }
-        wrn('yt-dlp binary corrupt, re-downloading...')
+        wrn(`yt-dlp terlalu kecil (${(fs.statSync(YTDLP_PATH).size / 1024 / 1024).toFixed(1)}MB) — itu Python script, bukan binary. Re-downloading...`)
         fs.unlinkSync(YTDLP_PATH)
     }
 
-    inf('Downloading yt-dlp binary (~30MB, hanya sekali)...')
+    inf('Downloading yt-dlp Linux binary (~30MB, hanya sekali)...')
     try {
         await downloadFile(YTDLP_URL, YTDLP_PATH)
-        fs.chmodSync(YTDLP_PATH, '755') // chmod +x
+        fs.chmodSync(YTDLP_PATH, '755')
         const size = fs.statSync(YTDLP_PATH).size
         ok(`yt-dlp downloaded: ${(size / 1024 / 1024).toFixed(1)} MB`)
         process.env.YTDLP_PATH = YTDLP_PATH
