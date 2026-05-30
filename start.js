@@ -67,6 +67,34 @@ function downloadFile(url, destPath) {
 }
 
 // ─────────────────────────────────────────────
+// STEP 0: INSTALL DEPENDENCIES
+// Jalankan npm install untuk memastikan semua paket tersedia di server.
+// Ini penting setelah update package.json di Pterodactyl.
+// ─────────────────────────────────────────────
+
+function ensureDependencies() {
+    // Cek apakah ytdl-core sudah terinstall
+    const ytdlCheck = path.resolve('./node_modules/@distube/ytdl-core/package.json')
+    const ytSrCheck = path.resolve('./node_modules/youtube-sr/package.json')
+    if (fs.existsSync(ytdlCheck) && fs.existsSync(ytSrCheck)) {
+        ok('Dependencies: @distube/ytdl-core & youtube-sr ready.')
+        return
+    }
+    inf('Installing npm dependencies (@distube/ytdl-core, youtube-sr)...')
+    inf('Ini mungkin butuh 1-2 menit...')
+    try {
+        execSync('npm install --no-audit --no-fund --prefer-offline', {
+            stdio: 'pipe',
+            timeout: 180_000
+        })
+        ok('npm install selesai.')
+    } catch (e) {
+        wrn(`npm install gagal: ${e.stderr?.toString()?.slice(0, 200) ?? e.message}`)
+        wrn('Coba restart bot lagi. Jika masih gagal, jalankan npm install manual.')
+    }
+}
+
+// ─────────────────────────────────────────────
 // STEP 1: FOLDER STRUCTURE
 // ─────────────────────────────────────────────
 
@@ -357,10 +385,7 @@ function validateEnv() {
 function printSummary() {
     const fonts = fs.readdirSync(FONT_DIR).filter(f => f.endsWith('.ttf') || f.endsWith('.otf'))
     const hasFfmpeg = commandExists('ffmpeg') || fs.existsSync(FFMPEG_PATH)
-    // Hanya true jika YTDLP_PATH benar-benar ter-set oleh setupYtDlp (artinya bisa dijalankan)
-    const hasYtdlp = !!process.env.YTDLP_PATH
-    const ytdlpMode = process.env.YTDLP_MODE ? ` via ${process.env.YTDLP_MODE}` : ''
-    const ytdlpInfo = hasYtdlp ? `✅ ready${ytdlpMode}` : '❌ tidak bisa dijalankan (radio disabled)'
+    const ytdlpInfo = `✅ via @distube/ytdl-core (Node.js native)`
 
     console.log('\n' + '─'.repeat(50))
     console.log('  🤖 RonnBot v2.0 — Bootstrap Summary')
@@ -402,11 +427,12 @@ function launchBot() {
 async function main() {
     console.log('\n🚀 [Bootstrap] RonnBot v2.0 starting up...\n')
     try {
-        setupDirectories()
-        await setupFonts()
-        await setupFfmpeg()
-        await setupYtDlp()
-        validateEnv()
+        ensureDependencies()      // STEP 0: install npm deps jika perlu
+        setupDirectories()         // STEP 1
+        await setupFonts()         // STEP 2
+        await setupFfmpeg()        // STEP 3
+        // STEP 4: yt-dlp binary sudah tidak diperlukan — radio kini pakai @distube/ytdl-core
+        validateEnv()              // STEP 5
         printSummary()
         launchBot()
     } catch (e) {

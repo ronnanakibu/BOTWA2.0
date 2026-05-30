@@ -1,87 +1,92 @@
 // src/services/radio.js
 // RadioService — Live Radio Streaming Engine
-// Architecture: yt-dlp → FFmpeg → HTTP chunked stream → listeners
+// Architecture: ytdl-core → FFmpeg → HTTP chunked stream → listeners
+// No yt-dlp binary needed — uses @distube/ytdl-core + youtube-sr (Node.js native)
 
-import { spawn, execSync } from 'child_process'
+import { spawn } from 'child_process'
 import { EventEmitter } from 'events'
 import fs from 'fs'
 import path from 'path'
 import { logger } from '../utils/logger.js'
 
 // ─────────────────────────────────────────────
-// CONSTANTS
+// YOUTUBE HELPERS (Node.js native, no binary needed)
 // ─────────────────────────────────────────────
 
-function isYtdlpRunnable(cmd, args = ['--version']) {
+// Lazy-load ytdl-core to avoid startup crash if not yet installed
+async function getYtdlCore() {
     try {
-        execSync(`${cmd} ${args.join(' ')}`, { stdio: 'pipe', timeout: 5000 })
-        return true
-    } catch (_) {
-        return false
+        const mod = await import('@distube/ytdl-core')
+        return mod.default ?? mod
+    } catch (e) {
+        throw new Error(`@distube/ytdl-core belum terinstall. Restart bot untuk install otomatis. (${e.message})`)
     }
 }
 
-function getYtdlpSpawnConfig() {
-    const localDefault = path.resolve('./storage/bin/yt-dlp')
-    const localPyz     = path.resolve('./storage/bin/yt-dlp.pyz')
-    const localLinux   = path.resolve('./storage/bin/yt-dlp_linux')
-
-    // 1. Gunakan konfigurasi yang sudah di-set oleh start.js via env vars
-    const envPath = process.env.YTDLP_PATH
-    const envMode = process.env.YTDLP_MODE  // python binary name: python3, python, etc
-
-    if (envPath && envMode && (envPath === localDefault || envPath === localPyz || fs.existsSync(envPath))) {
-        // YTDLP_MODE berisi nama interpreter Python yang telah diverifikasi oleh start.js
-        logger.debug(`[Radio] yt-dlp: env mode=${envMode} path=${envPath}`)
-        return { command: envMode, extraArgs: [envPath] }
+async function getYoutubeSR() {
+    try {
+        const mod = await import('youtube-sr')
+        return mod.default?.default ?? mod.default ?? mod
+    } catch (e) {
+        throw new Error(`youtube-sr belum terinstall. Restart bot untuk install otomatis. (${e.message})`)
     }
-    if (envPath && !envMode && envPath !== 'yt-dlp' && fs.existsSync(envPath) && isYtdlpRunnable(envPath)) {
-        logger.debug(`[Radio] yt-dlp: env mode=native path=${envPath}`)
-        return { command: envPath, extraArgs: [] }
-    }
-    if ((envPath === 'yt-dlp' || !envPath) && isYtdlpRunnable('yt-dlp')) {
-        logger.debug('[Radio] yt-dlp: env mode=system')
-        return { command: 'yt-dlp', extraArgs: [] }
-    }
-
-    // 2. Fallback: coba semua opsi dari awal
-    if (isYtdlpRunnable('yt-dlp')) {
-        logger.debug('[Radio] yt-dlp: fallback=system yt-dlp')
-        return { command: 'yt-dlp', extraArgs: [] }
-    }
-    if (fs.existsSync(localDefault) && isYtdlpRunnable(localDefault)) {
-        logger.debug('[Radio] yt-dlp: fallback=localDefault native')
-        return { command: localDefault, extraArgs: [] }
-    }
-    if (fs.existsSync(localLinux) && isYtdlpRunnable(localLinux)) {
-        logger.debug('[Radio] yt-dlp: fallback=localLinux native')
-        return { command: localLinux, extraArgs: [] }
-    }
-    for (const pyCmd of ['python3', 'python']) {
-        if (fs.existsSync(localPyz) && isYtdlpRunnable(pyCmd, [localPyz, '--version'])) {
-            logger.debug(`[Radio] yt-dlp: fallback=localPyz via ${pyCmd}`)
-            return { command: pyCmd, extraArgs: [localPyz] }
-        }
-        if (fs.existsSync(localDefault) && isYtdlpRunnable(pyCmd, [localDefault, '--version'])) {
-            logger.debug(`[Radio] yt-dlp: fallback=localDefault via ${pyCmd}`)
-            return { command: pyCmd, extraArgs: [localDefault] }
-        }
-    }
-
-    // Semua gagal — log diagnostik yang informatif langsung ke stdout
-    const diag = [
-        `YTDLP_PATH=${envPath ?? 'unset'}`,
-        `YTDLP_MODE=${envMode ?? 'unset'}`,
-        `localDefault exists=${fs.existsSync(localDefault)}`,
-        `localPyz exists=${fs.existsSync(localPyz)}`,
-        `localLinux exists=${fs.existsSync(localLinux)}`,
-    ].join(' | ')
-    process.stdout.write(`\x1b[31m[ERROR] [Radio] yt-dlp: semua strategi gagal. ${diag}\x1b[0m\n`)
-
-    // Return default walau gagal, error akan ditangkap saat spawn
-    return { command: localPyz.length && fs.existsSync(localPyz) ? localPyz : localDefault, extraArgs: [] }
 }
-const TEMP_DIR = path.resolve('./storage/media/radio-temp')
+
+/**
+ * Cari lagu di YouTube. Return { title, url, duration (detik), thumbnail }.
+ */
+async function youtubeSearch(query) {
+    const YouTube = await getYoutubeSR()
+    const results = await YouTube.search(query, { limit: 1, type: 'video' })
+    if (!results || results.length === 0) throw new Error('Lagu tidak ditemukan di YouTube.')
+    const v = results[0]
+    return {
+        title: v.title || 'Unknown',
+        url: `https://www.youtube.com/watch?v=${v.id}`,
+        duration: Math.floor((v.duration || 0) / 1000),  // youtube-sr returns ms
+        thumbnail: v.thumbnail?.url || v.thumbnail || null
+    }
+}
+
+/**
+ * Ambil info lagu dari URL langsung (bukan search).
+ */
+async function youtubeGetInfo(url) {
+    const ytdl = await getYtdlCore()
+    const info = await ytdl.getBasicInfo(url)
+    const d = info.videoDetails
+    return {
+        title: d.title || 'Unknown',
+        url,
+        duration: parseInt(d.lengthSeconds) || 0,
+        thumbnail: d.thumbnails?.slice(-1)[0]?.url || null
+    }
+}
+
+/**
+ * Ambil URL audio stream terbaik dari video YouTube.
+ * Return: URL CDN yang langsung bisa dipakai ffmpeg.
+ */
+async function youtubeGetAudioUrl(videoUrl) {
+    const ytdl = await getYtdlCore()
+    const info = await ytdl.getInfo(videoUrl)
+    
+    // Coba audioonly dulu, fallback ke format apapun yang punya audio
+    let format = ytdl.chooseFormat(info.formats, {
+        filter: 'audioonly',
+        quality: 'highestaudio'
+    })
+    if (!format?.url) {
+        format = ytdl.chooseFormat(info.formats, {
+            filter: f => f.hasAudio,
+            quality: 'highestaudio'
+        })
+    }
+    if (!format?.url) throw new Error('Tidak bisa mendapatkan audio stream URL dari YouTube.')
+    return format.url
+}
+
+
 const RADIO_PORT = parseInt(process.env.RADIO_PORT ?? '8080')
 const MAX_QUEUE = parseInt(process.env.RADIO_MAX_QUEUE ?? '20')
 const CHUNK_SIZE = 64 * 1024  // 64KB per chunk ke listeners
@@ -138,7 +143,6 @@ class RadioService extends EventEmitter {
     #queue = []          // Track[]
     #currentTrack = null        // Track | null
     #ffmpeg = null        // FFmpeg child process
-    #ytdlp = null        // yt-dlp child process
     #clients = new Set()   // HTTP response streams
     #isPlaying = false
     #activeFx = 'normal'
@@ -167,60 +171,25 @@ class RadioService extends EventEmitter {
     // ─────────────────────────────────────────────
 
     /**
-     * Search YouTube dan return info lagu via yt-dlp.
+     * Search YouTube dan return info lagu via ytdl-core + youtube-sr (Node.js native).
      * Return Track object atau throw kalau tidak ketemu.
      */
     async search(query, requestedBy) {
-        this.#checkYtdlp()
-
-        // Kalau query adalah URL langsung, langsung resolve
         const isUrl = /^https?:\/\//.test(query)
-        const ytQuery = isUrl ? query : `ytsearch1:${query}`
 
-        return new Promise((resolve, reject) => {
-            const args = [
-                '--no-playlist',
-                '--print', '%(title)s\n%(webpage_url)s\n%(duration)s\n%(thumbnail)s',
-                '--no-download',
-                '--quiet',
-                ytQuery
-            ]
+        let info
+        if (isUrl) {
+            info = await youtubeGetInfo(query)
+        } else {
+            info = await youtubeSearch(query)
+        }
 
-            const config = getYtdlpSpawnConfig()
-            const proc = spawn(config.command, [...config.extraArgs, ...args])
-            let output = ''
-            let errOutput = ''
-
-            const timeoutId = setTimeout(() => {
-                try { proc.kill() } catch (_) {}
-                reject(new Error('Search timeout.'))
-            }, 15_000)
-
-            proc.on('error', (err) => {
-                clearTimeout(timeoutId)
-                reject(new Error(`Gagal menjalankan yt-dlp: ${err.message}`))
-            })
-
-            proc.stdout.on('data', d => output += d.toString())
-            proc.stderr.on('data', d => errOutput += d.toString())
-
-            proc.on('close', (code) => {
-                clearTimeout(timeoutId)
-                if (code !== 0 || !output.trim()) {
-                    return reject(new Error(`yt-dlp gagal: ${errOutput.slice(0, 100)}`))
-                }
-
-                const [title, url, duration, thumbnail] = output.trim().split('\n')
-                if (!title || !url) return reject(new Error('Lagu tidak ditemukan.'))
-
-                resolve(new Track({
-                    title: title.trim(),
-                    url: url.trim(),
-                    duration: parseInt(duration) || 0,
-                    thumbnail: thumbnail?.trim() || null,
-                    requestedBy
-                }))
-            })
+        return new Track({
+            title:       info.title,
+            url:         info.url,
+            duration:    info.duration,
+            thumbnail:   info.thumbnail,
+            requestedBy
         })
     }
 
@@ -301,42 +270,22 @@ class RadioService extends EventEmitter {
     }
 
     /**
-     * Stream satu track via yt-dlp → FFmpeg → HTTP clients.
+     * Stream satu track via ytdl-core → FFmpeg → HTTP clients.
+     * ytdl-core mengambil URL audio CDN, lalu ffmpeg transcode ke MP3.
      */
     async #streamTrack(track) {
-        return new Promise((resolve, reject) => {
-            this.#checkYtdlp()
+        return new Promise(async (resolve, reject) => {
+            try {
+                // Build FFmpeg audio filter chain
+                const filters = []
+                if (FX_PRESETS[this.#activeFx]) filters.push(FX_PRESETS[this.#activeFx])
+                if (EQ_PRESETS[this.#activeEq]) filters.push(EQ_PRESETS[this.#activeEq])
+                const filterStr = filters.join(',')
 
-            // Build FFmpeg audio filter chain
-            const filters = []
-            if (FX_PRESETS[this.#activeFx]) filters.push(FX_PRESETS[this.#activeFx])
-            if (EQ_PRESETS[this.#activeEq]) filters.push(EQ_PRESETS[this.#activeEq])
-            const filterStr = filters.join(',')
-
-            // yt-dlp: extract audio stream URL (tidak download dulu)
-            const ytArgs = [
-                '--no-playlist',
-                '--format', 'bestaudio[ext=m4a]/bestaudio/best',
-                '--get-url',
-                '--quiet',
-                track.url
-            ]
-
-            const config = getYtdlpSpawnConfig()
-            const ytProc = spawn(config.command, [...config.extraArgs, ...ytArgs])
-            this.#ytdlp = ytProc
-            let streamUrl = ''
-            let ytErr = ''
-
-            ytProc.stdout.on('data', d => streamUrl += d.toString())
-            ytProc.stderr.on('data', d => ytErr += d.toString())
-
-            ytProc.on('close', (code) => {
-                if (code !== 0 || !streamUrl.trim()) {
-                    return reject(new Error(`yt-dlp gagal resolve URL: ${ytErr.slice(0, 100)}`))
-                }
-
-                streamUrl = streamUrl.trim()
+                // ytdl-core: ambil URL audio CDN (tanpa download)
+                process.stdout.write(`\x1b[36m[Radio] Resolving audio URL for: ${track.title}\x1b[0m\n`)
+                const streamUrl = await youtubeGetAudioUrl(track.url)
+                process.stdout.write(`\x1b[32m[Radio] Audio URL resolved. Starting FFmpeg...\x1b[0m\n`)
 
                 // FFmpeg: transcode ke MP3 128kbps untuk streaming
                 const ffArgs = [
@@ -352,9 +301,7 @@ class RadioService extends EventEmitter {
                 ]
 
                 // Inject audio filter kalau ada
-                if (filterStr) {
-                    ffArgs.push('-af', filterStr)
-                }
+                if (filterStr) ffArgs.push('-af', filterStr)
 
                 ffArgs.push(
                     '-f', 'mp3',
@@ -366,9 +313,7 @@ class RadioService extends EventEmitter {
                 this.#ffmpeg = ffProc
 
                 // Broadcast setiap chunk ke semua HTTP clients
-                ffProc.stdout.on('data', (chunk) => {
-                    this.#broadcast(chunk)
-                })
+                ffProc.stdout.on('data', (chunk) => this.#broadcast(chunk))
 
                 ffProc.stderr.on('data', d => {
                     logger.debug('[FFmpeg]', d.toString().trim())
@@ -376,7 +321,6 @@ class RadioService extends EventEmitter {
 
                 ffProc.on('close', (ffCode) => {
                     this.#ffmpeg = null
-                    this.#ytdlp = null
                     if (ffCode === 0 || this.#skipRequested) {
                         resolve()
                     } else {
@@ -387,19 +331,19 @@ class RadioService extends EventEmitter {
                 ffProc.on('error', (e) => {
                     reject(new Error(`FFmpeg error: ${e.message}`))
                 })
-            })
 
-            ytProc.on('error', (e) => {
-                reject(new Error(`yt-dlp error: ${e.message}`))
-            })
+                // Timeout safety: kalau lagu > 10 menit timeout
+                const maxDuration = Math.min((track.duration || 600) + 30, 660) * 1000
+                this.#playTimeout = setTimeout(() => {
+                    logger.warn(`[Radio] Timeout lagu ${track.title}, force skip`)
+                    this.#killProcesses()
+                    resolve()
+                }, maxDuration)
 
-            // Timeout safety: kalau lagu > 10 menit timeout
-            const maxDuration = Math.min((track.duration || 600) + 30, 660) * 1000
-            this.#playTimeout = setTimeout(() => {
-                logger.warn(`[Radio] Timeout lagu ${track.title}, force skip`)
-                this.#killProcesses()
-                resolve()
-            }, maxDuration)
+            } catch (err) {
+                process.stdout.write(`\x1b[31m[Radio] streamTrack error: ${err.message}\x1b[0m\n`)
+                reject(err)
+            }
         }).finally(() => {
             clearTimeout(this.#playTimeout)
         })
@@ -517,27 +461,7 @@ class RadioService extends EventEmitter {
     #killProcesses() {
         clearTimeout(this.#playTimeout)
         try { this.#ffmpeg?.kill('SIGKILL') } catch (_) { }
-        try { this.#ytdlp?.kill('SIGKILL') } catch (_) { }
         this.#ffmpeg = null
-        this.#ytdlp = null
-    }
-
-    #checkYtdlp() {
-        const config = getYtdlpSpawnConfig()
-        // Interpreter commands (python*, yt-dlp system) — bypass file check
-        const isInterpreter = ['yt-dlp', 'python3', 'python'].includes(config.command) ||
-            config.command.startsWith('/usr/')
-        if (isInterpreter) return
-        if (!fs.existsSync(config.command)) {
-            const msg = `yt-dlp tidak ditemukan: ${config.command}. Restart bot untuk re-download.`
-            process.stdout.write(`\x1b[31m[ERROR] [Radio] ${msg}\x1b[0m\n`)
-            throw new Error(msg)
-        }
-        if (!isYtdlpRunnable(config.command)) {
-            const msg = `yt-dlp ada di ${config.command} tapi tidak bisa dieksekusi. Restart bot untuk download ulang.`
-            process.stdout.write(`\x1b[31m[ERROR] [Radio] ${msg}\x1b[0m\n`)
-            throw new Error(msg)
-        }
     }
 
     /**
