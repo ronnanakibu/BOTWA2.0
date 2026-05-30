@@ -117,17 +117,75 @@ async function setupFonts() {
 }
 
 // ─────────────────────────────────────────────
-// STEP 3: FFMPEG CHECK
+// STEP 3: FFMPEG — auto-download static binary
+// Pakai ffmpeg-static build untuk Linux Debian x86_64
+// Tidak butuh apt, tidak butuh root
 // ─────────────────────────────────────────────
 
+const FFMPEG_PATH = path.resolve('./storage/bin/ffmpeg')
+// John Van Sickle ffmpeg static builds — paling reliable untuk Debian/Ubuntu
+const FFMPEG_URL = 'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz'
+const FFMPEG_TAR = path.resolve('./storage/bin/ffmpeg.tar.xz')
+
 async function setupFfmpeg() {
+    // Cek apakah sudah ada di PATH sistem dulu
     if (commandExists('ffmpeg')) {
         const version = execSync('ffmpeg -version', { stdio: 'pipe' }).toString().split('\n')[0]
-        ok(`FFmpeg: ${version}`)
+        ok(`FFmpeg (system): ${version}`)
         return
     }
-    wrn('FFmpeg tidak ditemukan. Fitur radio dan stiker animasi tidak akan berfungsi.')
-    wrn('Hubungi provider Pterodactyl untuk install ffmpeg.')
+
+    // Cek apakah binary lokal sudah ada
+    if (fs.existsSync(FFMPEG_PATH)) {
+        const size = fs.statSync(FFMPEG_PATH).size
+        if (size > 10_000_000) { // > 10MB = valid
+            ok(`FFmpeg (local): ${(size / 1024 / 1024).toFixed(1)} MB`)
+            try { fs.chmodSync(FFMPEG_PATH, '755') } catch (_) { }
+            // Tambah ke PATH supaya spawn('ffmpeg') bisa ketemu
+            process.env.PATH = path.resolve('./storage/bin') + ':' + process.env.PATH
+            return
+        }
+        wrn('FFmpeg binary corrupt, re-downloading...')
+        fs.unlinkSync(FFMPEG_PATH)
+    }
+
+    inf('Downloading FFmpeg static binary untuk Debian (~80MB, hanya sekali)...')
+    inf('Ini mungkin butuh 1-2 menit tergantung koneksi server...')
+
+    try {
+        // Download tar.xz
+        await downloadFile(FFMPEG_URL, FFMPEG_TAR)
+        inf(`Downloaded tar: ${(fs.statSync(FFMPEG_TAR).size / 1024 / 1024).toFixed(1)} MB`)
+
+        // Extract binary ffmpeg dari tar.xz
+        // tar -xJ (xz) → extract file ffmpeg saja ke storage/bin/
+        inf('Extracting ffmpeg binary...')
+        execSync(
+            `tar -xJf "${FFMPEG_TAR}" --wildcards "*/ffmpeg" --strip-components=1 -C "${path.resolve('./storage/bin/')}"`,
+            { stdio: 'pipe' }
+        )
+
+        // Cleanup tar
+        try { fs.unlinkSync(FFMPEG_TAR) } catch (_) { }
+
+        if (!fs.existsSync(FFMPEG_PATH)) {
+            throw new Error('ffmpeg binary tidak ditemukan setelah extract')
+        }
+
+        fs.chmodSync(FFMPEG_PATH, '755')
+        const size = fs.statSync(FFMPEG_PATH).size
+        ok(`FFmpeg downloaded & extracted: ${(size / 1024 / 1024).toFixed(1)} MB`)
+
+        // Tambah ke PATH
+        process.env.PATH = path.resolve('./storage/bin') + ':' + process.env.PATH
+
+    } catch (e) {
+        wrn(`Gagal setup FFmpeg: ${e.message}`)
+        wrn('Fitur radio tidak akan berfungsi. Coba restart bot untuk download ulang.')
+        // Cleanup kalau gagal
+        try { fs.unlinkSync(FFMPEG_TAR) } catch (_) { }
+        try { fs.unlinkSync(FFMPEG_PATH) } catch (_) { }
+    }
 }
 
 // ─────────────────────────────────────────────
@@ -209,7 +267,7 @@ function validateEnv() {
 
 function printSummary() {
     const fonts = fs.readdirSync(FONT_DIR).filter(f => f.endsWith('.ttf') || f.endsWith('.otf'))
-    const hasFfmpeg = commandExists('ffmpeg')
+    const hasFfmpeg = commandExists('ffmpeg') || fs.existsSync(FFMPEG_PATH)
     const hasYtdlp = fs.existsSync(YTDLP_PATH)
 
     console.log('\n' + '─'.repeat(50))
