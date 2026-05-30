@@ -12,34 +12,58 @@ import { logger } from '../utils/logger.js'
 // CONSTANTS
 // ─────────────────────────────────────────────
 
-function commandExists(cmd) {
+function isYtdlpRunnable(cmd, args = ['--version']) {
     try {
-        const checkCmd = process.platform === 'win32' ? `where ${cmd}` : `which ${cmd}`
-        execSync(checkCmd, { stdio: 'pipe' })
+        execSync(`${cmd} ${args.join(' ')}`, { stdio: 'pipe' })
         return true
     } catch (_) {
         return false
     }
 }
 
-// YTDLP_PATH di-resolve setiap kali dipakai — bukan di module load time
-// Karena process.env.YTDLP_PATH di-set oleh start.js setelah module ini di-load
-function getYtdlpPath() {
-    // 1. Cek apakah yt-dlp terpasang secara global di PATH sistem
-    if (commandExists('yt-dlp')) {
-        return 'yt-dlp'
+function getYtdlpSpawnConfig() {
+    // 1. Cek apakah global 'yt-dlp' bisa dijalankan
+    if (isYtdlpRunnable('yt-dlp')) {
+        try {
+            const realPath = execSync(process.platform === 'win32' ? 'where yt-dlp' : 'which yt-dlp', { stdio: 'pipe' }).toString().trim()
+            if (!realPath.includes('storage/bin/yt-dlp') || isYtdlpRunnable(realPath)) {
+                return { command: 'yt-dlp', extraArgs: [] }
+            }
+        } catch (_) {
+            return { command: 'yt-dlp', extraArgs: [] }
+        }
     }
 
-    // 2. Cek process.env.YTDLP_PATH
-    if (process.env.YTDLP_PATH && fs.existsSync(process.env.YTDLP_PATH)) {
-        return process.env.YTDLP_PATH
-    }
-
-    // 3. Fallbacks ke path lokal
+    const localDefault = path.resolve('./storage/bin/yt-dlp')
     const localLinux = path.resolve('./storage/bin/yt-dlp_linux')
-    if (fs.existsSync(localLinux)) return localLinux
 
-    return path.resolve('./storage/bin/yt-dlp')
+    // 2. Cek localLinux secara native
+    if (fs.existsSync(localLinux) && isYtdlpRunnable(localLinux)) {
+        return { command: localLinux, extraArgs: [] }
+    }
+
+    // 3. Cek localDefault secara native
+    if (fs.existsSync(localDefault) && isYtdlpRunnable(localDefault)) {
+        return { command: localDefault, extraArgs: [] }
+    }
+
+    // 4. Cek localDefault via python3 (untuk Alpine Linux zipapp compatibility)
+    if (fs.existsSync(localDefault) && isYtdlpRunnable('python3', [localDefault, '--version'])) {
+        return { command: 'python3', extraArgs: [localDefault] }
+    }
+
+    // 5. Cek localDefault via python
+    if (fs.existsSync(localDefault) && isYtdlpRunnable('python', [localDefault, '--version'])) {
+        return { command: 'python', extraArgs: [localDefault] }
+    }
+
+    // 6. Cek localLinux via python3
+    if (fs.existsSync(localLinux) && isYtdlpRunnable('python3', [localLinux, '--version'])) {
+        return { command: 'python3', extraArgs: [localLinux] }
+    }
+
+    // Fallback default jika semua gagal
+    return { command: localDefault, extraArgs: [] }
 }
 const TEMP_DIR = path.resolve('./storage/media/radio-temp')
 const RADIO_PORT = parseInt(process.env.RADIO_PORT ?? '8080')
@@ -146,7 +170,8 @@ class RadioService extends EventEmitter {
                 ytQuery
             ]
 
-            const proc = spawn(getYtdlpPath(), args)
+            const config = getYtdlpSpawnConfig()
+            const proc = spawn(config.command, [...config.extraArgs, ...args])
             let output = ''
             let errOutput = ''
 
@@ -281,7 +306,8 @@ class RadioService extends EventEmitter {
                 track.url
             ]
 
-            const ytProc = spawn(getYtdlpPath(), ytArgs)
+            const config = getYtdlpSpawnConfig()
+            const ytProc = spawn(config.command, [...config.extraArgs, ...ytArgs])
             this.#ytdlp = ytProc
             let streamUrl = ''
             let ytErr = ''
@@ -481,10 +507,12 @@ class RadioService extends EventEmitter {
     }
 
     #checkYtdlp() {
-        const ytdlpPath = getYtdlpPath()
-        if (ytdlpPath === 'yt-dlp') return
-        if (!fs.existsSync(ytdlpPath)) {
-            throw new Error('yt-dlp tidak ditemukan. Jalankan ulang bot untuk download otomatis.')
+        const config = getYtdlpSpawnConfig()
+        if (config.command === 'yt-dlp' || config.command === 'python3' || config.command === 'python') {
+            return
+        }
+        if (!fs.existsSync(config.command) || !isYtdlpRunnable(config.command)) {
+            throw new Error('yt-dlp tidak dapat dijalankan di server ini. Silakan pasang yt-dlp secara global di panel Pterodactyl.')
         }
     }
 
