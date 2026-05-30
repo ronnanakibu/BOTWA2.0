@@ -481,7 +481,9 @@ class RadioService extends EventEmitter {
     }
 
     #checkYtdlp() {
-        if (!fs.existsSync(getYtdlpPath())) {
+        const ytdlpPath = getYtdlpPath()
+        if (ytdlpPath === 'yt-dlp') return
+        if (!fs.existsSync(ytdlpPath)) {
             throw new Error('yt-dlp tidak ditemukan. Jalankan ulang bot untuk download otomatis.')
         }
     }
