@@ -11,11 +11,11 @@ import 'dotenv/config'
 
 import { loadCommands } from './loader.js'
 import { handleIncomingMessage } from '../handlers/message.js'
-import { botLogger } from '../utils/logger.js'
+import { logger, botLogger } from '../utils/logger.js'
 import { initReminderScheduler } from '../commands/general/remindme.js'
 import { startRadioServer } from '../server/radio.js'
 
-const pinoLogger = pino({ level: 'silent' }) // suppress Baileys internal noise
+const pinoLogger = logger.child({ module: 'baileys' })
 
 let reconnectCount = 0
 const MAX_RECONNECT_ATTEMPTS = 5

@@ -28,21 +28,19 @@ function commandExists(cmd) {
 
 function downloadFile(url, destPath) {
     return new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(destPath)
         const request = (targetUrl) => {
             https.get(targetUrl, (res) => {
                 if (res.statusCode === 301 || res.statusCode === 302) {
-                    file.close()
                     return request(res.headers.location)
                 }
                 if (res.statusCode !== 200) {
-                    file.close()
-                    fs.unlink(destPath, () => { })
                     return reject(new Error(`HTTP ${res.statusCode}`))
                 }
+                const file = fs.createWriteStream(destPath)
                 res.pipe(file)
                 file.on('finish', () => { file.close(); resolve() })
-            }).on('error', (e) => { fs.unlink(destPath, () => { }); reject(e) })
+                file.on('error', (e) => { fs.unlink(destPath, () => { }); reject(e) })
+            }).on('error', (e) => { reject(e) })
         }
         request(url)
     })
